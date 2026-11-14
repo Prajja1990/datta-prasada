@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#FDFBF7] text-stone-800 font-sans antialiased selection:bg-gold-200 selection:text-gold-900;
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, .font-traditional {
+    @apply font-serif;
+  }
+}
+
+/* Subtle traditional kolam/mandala decorative watermark pattern */
+.bg-mandala-pattern {
+  background-color: #FDFBF7;
+  background-image: radial-gradient(rgba(180, 83, 9, 0.04) 1px, transparent 1px), radial-gradient(rgba(27, 67, 50, 0.04) 1px, #FDFBF7 1px);
+  background-size: 24px 24px;
+  background-position: 0 0, 12px 12px;
+}
+
+.bg-dark-mandala {
+  background-color: #081C15;
+  background-image: radial-gradient(rgba(251, 191, 36, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Custom styling for thermal receipts and KOTs */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #thermal-print-area, #thermal-print-area * {
+    visibility: visible;
+  }
+  #thermal-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 72mm; /* Fits 80mm and 58mm thermal rolls */
+    padding: 0;
+    margin: 0;
+    background: white !important;
+    color: black !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 12px !important;
+    line-height: 1.25 !important;
+  }
+  @page {
+    margin: 0;
+    size: auto;
+  }
+}
+
+/* Custom smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #FAF6EE;
+}
+::-webkit-scrollbar-thumb {
+  background: #DEC494;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #CCA86E;
+}
