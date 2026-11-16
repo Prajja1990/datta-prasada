@@ -47,6 +47,11 @@ export interface UserProfile {
   permissions: PermissionKey[];
   isActive: boolean;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface UserAccount extends UserProfile {
+  password?: string;
 }
 
 export interface AuthContextType {
@@ -61,6 +66,7 @@ export interface AuthContextType {
   hasPermission: (permission: PermissionKey) => boolean;
   hasAnyPermission: (permissions: PermissionKey[]) => boolean;
   hasRole: (role: UserRoleType) => boolean;
+  changePassword: (params: { oldPassword?: string; newPassword: string; targetUserId?: string }) => Promise<{ success: boolean; error?: string }>;
 }
 
 export interface Category {

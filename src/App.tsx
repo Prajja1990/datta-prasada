@@ -31,8 +31,19 @@ import { AdminReportsPage } from './pages/admin/AdminReportsPage';
 import { AdminAuditLogsPage } from './pages/admin/AdminAuditLogsPage';
 import { AdminUsersPage } from './pages/admin/AdminUsersPage';
 import { AdminSettingsPage } from './pages/admin/AdminSettingsPage';
+import { AdminPermissionsPage } from './pages/admin/AdminPermissionsPage';
+import { useAuth } from './context/AuthContext';
 
 const queryClient = new QueryClient();
+
+// Smart Redirector: Directs executive users to Overview dashboard, and counter staff exclusively to Live Orders
+const AdminIndexRedirect: React.FC = () => {
+  const { hasPermission } = useAuth();
+  if (hasPermission('dashboard.view')) {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+  return <Navigate to="/admin/orders" replace />;
+};
 
 export function App() {
   return (
@@ -81,13 +92,20 @@ export function App() {
                 <Route
                   path="/admin"
                   element={
-                    <ProtectedRoute permission="dashboard.view">
+                    <ProtectedRoute permission="orders.view_all">
                       <AdminLayout />
                     </ProtectedRoute>
                   }
                 >
-                  <Route index element={<Navigate to="/admin/dashboard" replace />} />
-                  <Route path="dashboard" element={<AdminDashboardPage />} />
+                  <Route index element={<AdminIndexRedirect />} />
+                  <Route
+                    path="dashboard"
+                    element={
+                      <ProtectedRoute permission="dashboard.view">
+                        <AdminDashboardPage />
+                      </ProtectedRoute>
+                    }
+                  />
                   <Route
                     path="orders"
                     element={
@@ -133,6 +151,14 @@ export function App() {
                     element={
                       <ProtectedRoute permission="roles.manage">
                         <AdminUsersPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="permissions"
+                    element={
+                      <ProtectedRoute permission="roles.manage">
+                        <AdminPermissionsPage />
                       </ProtectedRoute>
                     }
                   />

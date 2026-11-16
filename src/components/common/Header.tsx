@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
+import { ChangePasswordModal } from '../auth/ChangePasswordModal';
 import { 
   ShoppingBag, 
   Menu as MenuIcon, 
@@ -14,7 +15,8 @@ import {
   ShieldCheck, 
   User, 
   LogOut,
-  Flame
+  Flame,
+  Key
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -23,6 +25,7 @@ export const Header: React.FC = () => {
   const { user, isAuthenticated, logout } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -124,6 +127,13 @@ export const Header: React.FC = () => {
                   <span>{user?.roles[0].replace('_', ' ')}</span>
                 </Link>
                 <button
+                  onClick={() => setIsPasswordModalOpen(true)}
+                  className="p-1.5 text-stone-500 hover:text-temple-700 rounded-lg hover:bg-stone-100 transition"
+                  title="Change Password"
+                >
+                  <Key className="w-4 h-4 text-gold-600" />
+                </button>
+                <button
                   onClick={logout}
                   className="p-1.5 text-stone-500 hover:text-red-600 rounded-lg hover:bg-red-50 transition"
                   title="Logout"
@@ -200,17 +210,48 @@ export const Header: React.FC = () => {
           </Link>
 
           <div className="border-t border-stone-200 pt-3 mt-2 space-y-2">
-            <Link
-              to="/staff/login"
-              onClick={() => setMobileMenuOpen(false)}
-              className="flex items-center gap-2 p-3 rounded-xl text-temple-700 font-semibold bg-stone-50 hover:bg-stone-100"
-            >
-              <ShieldCheck className="w-5 h-5" />
-              <span>Staff & Kitchen Portal</span>
-            </Link>
+            {isAuthenticated ? (
+              <>
+                <button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setIsPasswordModalOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2 p-3 rounded-xl text-stone-800 font-semibold bg-gold-50 hover:bg-gold-100 text-xs border border-gold-200"
+                >
+                  <Key className="w-4 h-4 text-gold-700" />
+                  <span>Change Password ({user?.roles[0].replace('_', ' ')})</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    logout();
+                  }}
+                  className="w-full flex items-center gap-2 p-3 rounded-xl text-red-600 font-semibold bg-red-50 hover:bg-red-100 text-xs"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Sign Out</span>
+                </button>
+              </>
+            ) : (
+              <Link
+                to="/staff/login"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-2 p-3 rounded-xl text-temple-700 font-semibold bg-stone-50 hover:bg-stone-100"
+              >
+                <ShieldCheck className="w-5 h-5" />
+                <span>Staff & Kitchen Portal</span>
+              </Link>
+            )}
           </div>
         </div>
       )}
+
+      {/* Password Change Modal for Authenticated User */}
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+      />
     </header>
   );
 };

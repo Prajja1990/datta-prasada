@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { ChangePasswordModal } from '../auth/ChangePasswordModal';
 import { 
   LayoutDashboard, 
   ShoppingBag, 
@@ -13,13 +14,16 @@ import {
   LogOut, 
   ChefHat, 
   Flame, 
-  ArrowLeft
+  ArrowLeft,
+  Key,
+  ShieldCheck
 } from 'lucide-react';
 
 export const AdminLayout: React.FC = () => {
   const { user, logout, logoutFromAllDevices, hasPermission } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   const navItems = [
     {
@@ -65,6 +69,12 @@ export const AdminLayout: React.FC = () => {
       permission: 'roles.manage',
     },
     {
+      to: '/admin/permissions',
+      label: 'System Permissions',
+      icon: ShieldCheck,
+      permission: 'roles.manage',
+    },
+    {
       to: '/admin/settings',
       label: 'Restaurant Settings',
       icon: Settings,
@@ -105,12 +115,22 @@ export const AdminLayout: React.FC = () => {
 
           {/* User Role Badge */}
           {user && (
-            <div className="px-6 py-4 bg-temple-950/60 border-b border-temple-800/40">
-              <div className="text-xs text-stone-400">Signed in as:</div>
-              <div className="text-sm font-bold text-white truncate">{user.fullName}</div>
-              <div className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-black uppercase bg-gold-500/20 text-gold-300 border border-gold-400/40">
-                {user.roles[0].replace('_', ' ')}
+            <div className="px-6 py-4 bg-temple-950/60 border-b border-temple-800/40 space-y-2.5">
+              <div>
+                <div className="text-xs text-stone-400">Signed in as:</div>
+                <div className="text-sm font-bold text-white truncate">{user.fullName}</div>
+                <div className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-black uppercase bg-gold-500/20 text-gold-300 border border-gold-400/40">
+                  {user.roles[0].replace('_', ' ')}
+                </div>
               </div>
+
+              <button
+                onClick={() => setIsPasswordModalOpen(true)}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-temple-800/90 hover:bg-temple-700 text-gold-300 text-xs font-bold transition border border-gold-500/30 shadow-xs"
+              >
+                <Key className="w-3.5 h-3.5 text-gold-400" />
+                <span>Change Password</span>
+              </button>
             </div>
           )}
 
@@ -187,6 +207,12 @@ export const AdminLayout: React.FC = () => {
       <main className="flex-1 overflow-y-auto min-h-screen">
         <Outlet />
       </main>
+
+      {/* Password Change Modal */}
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+      />
     </div>
   );
 };

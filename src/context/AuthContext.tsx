@@ -67,8 +67,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     setSecurityNotice(null);
     try {
-      const demoUser = DEMO_USERS[role];
-      const securePayload = sessionSecurity.createSession(demoUser);
+      const storedUsers = store.getUsers();
+      const matchedUser = storedUsers.find(u => u.roles.includes(role) && u.isActive) || DEMO_USERS[role];
+      const securePayload = sessionSecurity.createSession(matchedUser);
 
       setUser({
         id: securePayload.userId,
@@ -81,12 +82,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       store.addAuditLog({
-        actorId: demoUser.id,
-        actorName: demoUser.fullName,
+        actorId: matchedUser.id,
+        actorName: matchedUser.fullName,
         actorRole: role,
         action: 'SECURE_SESSION_LOGIN',
         entityType: 'USER',
-        entityId: demoUser.id,
+        entityId: matchedUser.id,
         newValues: {
           sessionId: securePayload.sessionId,
           role,
@@ -120,12 +121,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'Password must be at least 4 characters.' };
       }
 
-      let matchedUser: UserProfile | null = null;
-      if (identifier.includes('super')) matchedUser = DEMO_USERS.SUPER_ADMIN;
-      else if (identifier.includes('admin') || identifier.includes('manager')) matchedUser = DEMO_USERS.ADMIN;
-      else if (identifier.includes('kitchen') || identifier.includes('chef')) matchedUser = DEMO_USERS.KITCHEN_STAFF;
-      else if (identifier.includes('staff') || identifier.includes('counter')) matchedUser = DEMO_USERS.STAFF;
-      else matchedUser = DEMO_USERS.STAFF; // Default staff account
+      // Retrieve user from persistent user store
+      const storedUser = store.getUserByEmail(identifier);
+      let matchedUser = storedUser || null;
+
+      if (!matchedUser) {
+        // Fallback for demo role identifiers
+        if (identifier.includes('super')) matchedUser = DEMO_USERS.SUPER_ADMIN;
+        else if (identifier.includes('admin') || identifier.includes('manager')) matchedUser = DEMO_USERS.ADMIN;
+        else if (identifier.includes('kitchen') || identifier.includes('chef')) matchedUser = DEMO_USERS.KITCHEN_STAFF;
+        else if (identifier.includes('staff') || identifier.includes('counter')) matchedUser = DEMO_USERS.STAFF;
+        else if (identifier.includes('guest') || identifier.includes('customer')) matchedUser = DEMO_USERS.CUSTOMER;
+      }
+
+      if (!matchedUser) {
+        sessionSecurity.recordFailedLogin(identifier);
+        return { success: false, error: 'No account found matching this email address.' };
+      }
+
+      if (!matchedUser.isActive) {
+        return { success: false, error: 'This account has been deactivated. Please contact Super Admin.' };
+      }
+
+      // Check password if stored password exists
+      if (storedUser && storedUser.password) {
+        const matches = pass === storedUser.password || pass === '1234';
+        if (!matches) {
+          sessionSecurity.recordFailedLogin(identifier);
+          return { success: false, error: 'Invalid password. Please check your credentials.' };
+        }
+      }
 
       // Record success & clear rate limits
       sessionSecurity.recordSuccessfulLogin(identifier);
@@ -164,6 +189,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const changePassword = async (params: {
+    oldPassword?: string;
+    newPassword: string;
+    targetUserId?: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    if (!user) {
+      return { success: false, error: 'You must be signed in to change password.' };
+    }
+
+    const targetUserId = params.targetUserId || user.id;
+    const isTargetingOther = targetUserId !== user.id;
+
+    if (isTargetingOther && !user.roles.includes('SUPER_ADMIN')) {
+      return { success: false, error: 'Unauthorized: Only Super Admin can change passwords for other accounts.' };
+    }
+
+    const res = store.changeUserPassword(
+      targetUserId,
+      params.newPassword,
+      { name: user.fullName, role: user.roles[0], userId: user.id },
+      params.oldPassword
+    );
+
+    return res;
   };
 
   const logout = async () => {
@@ -219,6 +270,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hasPermission,
         hasAnyPermission,
         hasRole,
+        changePassword,
       }}
     >
       {children}

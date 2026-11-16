@@ -1,5 +1,4 @@
-import { UserRoleType, PermissionKey, UserProfile } from '../types';
-import { store } from './store';
+import { UserRoleType, PermissionKey, UserProfile, UserAccount } from '../types';
 
 export const ROLE_PERMISSIONS_MAP: Record<UserRoleType, PermissionKey[]> = {
   SUPER_ADMIN: [
@@ -58,7 +57,7 @@ export const ROLE_PERMISSIONS_MAP: Record<UserRoleType, PermissionKey[]> = {
     'audit_logs.view',
   ],
   STAFF: [
-    'dashboard.view',
+    // Note: 'dashboard.view' is restricted from counter staff. Only live orders and counter operations are permitted.
     'orders.create',
     'orders.view_all',
     'orders.view_own',
@@ -137,6 +136,35 @@ export const DEMO_USERS: Record<UserRoleType, UserProfile> = {
   },
 };
 
+// Default persistent user accounts including initial credentials
+export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
+  {
+    ...DEMO_USERS.SUPER_ADMIN,
+    password: 'SuperAdmin@123',
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    ...DEMO_USERS.ADMIN,
+    password: 'Manager@123',
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    ...DEMO_USERS.STAFF,
+    password: 'Counter@123',
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    ...DEMO_USERS.KITCHEN_STAFF,
+    password: 'Kitchen@123',
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    ...DEMO_USERS.CUSTOMER,
+    password: 'Customer@123',
+    updatedAt: new Date().toISOString(),
+  },
+];
+
 export const hasPermission = (user: UserProfile | null, permission: PermissionKey): boolean => {
   if (!user || !user.isActive) return false;
   return user.permissions.includes(permission);
@@ -146,3 +174,184 @@ export const hasRole = (user: UserProfile | null, role: UserRoleType): boolean =
   if (!user || !user.isActive) return false;
   return user.roles.includes(role);
 };
+
+export interface PermissionDefinition {
+  key: PermissionKey;
+  domain: string;
+  name: string;
+  description: string;
+}
+
+export const SYSTEM_PERMISSIONS: PermissionDefinition[] = [
+  // Dashboard & Analytics
+  {
+    key: 'dashboard.view',
+    domain: 'Dashboard & Overview',
+    name: 'View Analytics Overview',
+    description: 'Inspect executive dashboard, live revenue figures, cash vs UPI totals, and daily sales metrics. Restricted to Super Admin and Admin (Manager); hidden from Counter Staff.',
+  },
+  // Orders & POS
+  {
+    key: 'orders.create',
+    domain: 'Orders & POS',
+    name: 'Create Orders',
+    description: 'Place dine-in and takeaway orders via customer storefront or counter staff billing terminal.',
+  },
+  {
+    key: 'orders.view_all',
+    domain: 'Orders & POS',
+    name: 'View All Live Orders',
+    description: 'Inspect live orders queue across all stations, active tokens, customer names, and prep statuses.',
+  },
+  {
+    key: 'orders.view_own',
+    domain: 'Orders & POS',
+    name: 'View Own Orders',
+    description: 'Track own order token, cooking stage, and digital bill from customer device.',
+  },
+  {
+    key: 'orders.accept',
+    domain: 'Orders & POS',
+    name: 'Accept Orders',
+    description: 'Acknowledge placed customer orders and advance them to active kitchen preparation queue.',
+  },
+  {
+    key: 'orders.prepare',
+    domain: 'Orders & POS',
+    name: 'Prepare Food Tickets',
+    description: 'Mark order items as cooking/preparing on the Kitchen Display System (KDS).',
+  },
+  {
+    key: 'orders.mark_ready',
+    domain: 'Orders & POS',
+    name: 'Mark Orders as Ready',
+    description: 'Notify counter staff and customers that the order is hot, prepared, and ready for pickup.',
+  },
+  {
+    key: 'orders.complete',
+    domain: 'Orders & POS',
+    name: 'Complete & Dispatch Orders',
+    description: 'Finalize order handoff to customer at counter and conclude the order lifecycle.',
+  },
+  {
+    key: 'orders.cancel',
+    domain: 'Orders & POS',
+    name: 'Cancel Orders',
+    description: 'Void or cancel an existing order with required audit reason tracking.',
+  },
+  // Menu & Catalog
+  {
+    key: 'menu.view',
+    domain: 'Menu & Catalog',
+    name: 'View Menu Items',
+    description: 'Browse Sakleshpur authentic dishes, categories, pricing, and ingredients.',
+  },
+  {
+    key: 'menu.create',
+    domain: 'Menu & Catalog',
+    name: 'Create Menu Items',
+    description: 'Add new traditional food items, combos, and beverages to the restaurant menu.',
+  },
+  {
+    key: 'menu.update',
+    domain: 'Menu & Catalog',
+    name: 'Edit Menu Items & Categories',
+    description: 'Update dish details, Kannada descriptions, image URLs, and live availability toggles.',
+  },
+  {
+    key: 'menu.delete',
+    domain: 'Menu & Catalog',
+    name: 'Delete Menu Items',
+    description: 'Permanently remove dishes or categories from the restaurant catalog.',
+  },
+  {
+    key: 'menu.manage_price',
+    domain: 'Menu & Catalog',
+    name: 'Manage Menu Prices',
+    description: 'Adjust menu prices, GST application, and promotional rates.',
+  },
+  // User Administration
+  {
+    key: 'users.view',
+    domain: 'User Administration',
+    name: 'View User Accounts',
+    description: 'View staff members, contact emails, assigned roles, and account statuses.',
+  },
+  {
+    key: 'users.create',
+    domain: 'User Administration',
+    name: 'Create User Accounts',
+    description: 'Super Admin authority to register new personnel accounts, assign initial credentials, and configure access.',
+  },
+  {
+    key: 'users.update',
+    domain: 'User Administration',
+    name: 'Update User Details',
+    description: 'Edit personal information, names, phone numbers, and contact details of users.',
+  },
+  {
+    key: 'users.deactivate',
+    domain: 'User Administration',
+    name: 'Activate / Deactivate Accounts',
+    description: 'Suspend or reinstate personnel accounts from accessing the system.',
+  },
+  // Roles & RBAC
+  {
+    key: 'roles.assign',
+    domain: 'Roles & RBAC',
+    name: 'Assign Roles to Users',
+    description: 'Allocate enterprise roles (Super Admin, Admin, Staff, Kitchen, Customer) to staff accounts.',
+  },
+  {
+    key: 'roles.manage',
+    domain: 'Roles & RBAC',
+    name: 'Manage System Roles & RBAC',
+    description: 'Administer role-based access control hierarchies and inspect system-wide permission entitlements.',
+  },
+  // Reports & Analytics
+  {
+    key: 'reports.view',
+    domain: 'Reports & Analytics',
+    name: 'View Sales Reports',
+    description: 'Inspect daily, weekly, and monthly sales reports, top-selling dishes, and revenue trends.',
+  },
+  {
+    key: 'reports.export',
+    domain: 'Reports & Analytics',
+    name: 'Export Sales Reports',
+    description: 'Download CSV and financial spreadsheets of transaction history.',
+  },
+  // Payments & Billing
+  {
+    key: 'payments.view',
+    domain: 'Payments & Billing',
+    name: 'View Payment Transactions',
+    description: 'Review UPI transaction IDs, cash collection logs, and payment settlement statuses.',
+  },
+  {
+    key: 'payments.verify',
+    domain: 'Payments & Billing',
+    name: 'Verify & Settle Payments',
+    description: 'Mark cash as received at counter or reconcile UPI QR payments.',
+  },
+  {
+    key: 'payments.refund',
+    domain: 'Payments & Billing',
+    name: 'Process Refunds',
+    description: 'Issue customer refunds for cancelled or disputed orders.',
+  },
+  // Outlet Settings
+  {
+    key: 'settings.manage',
+    domain: 'Outlet Settings',
+    name: 'Manage Operational Settings',
+    description: 'Configure restaurant address, UPI VPA, GST tax rates, and 58mm/80mm thermal receipt hardware.',
+  },
+  // Security & Auditing
+  {
+    key: 'audit_logs.view',
+    domain: 'Security & Auditing',
+    name: 'View Security Audit Trail',
+    description: 'Inspect tamper-evident system audit logs of every status change, role reassignment, and login attempt.',
+  },
+];

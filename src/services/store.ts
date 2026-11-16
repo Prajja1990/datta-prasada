@@ -10,9 +10,11 @@ import {
   OrderType, 
   PaymentMethod,
   PaymentStatus,
-  UserRoleType
+  UserRoleType,
+  UserAccount
 } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { INITIAL_USER_ACCOUNTS, ROLE_PERMISSIONS_MAP } from './auth';
 
 // Initial pre-seeded categories
 const INITIAL_CATEGORIES: Category[] = [
@@ -286,6 +288,7 @@ class StoreService {
   private ordersKey = 'dp_orders';
   private auditKey = 'dp_audit_logs';
   private sequenceKey = 'dp_daily_sequence';
+  private usersKey = 'dp_user_accounts';
 
   constructor() {
     this.initStorage();
@@ -302,6 +305,9 @@ class StoreService {
     }
     if (!localStorage.getItem(this.ordersKey)) {
       localStorage.setItem(this.ordersKey, JSON.stringify(INITIAL_ORDERS));
+    }
+    if (!localStorage.getItem(this.usersKey)) {
+      localStorage.setItem(this.usersKey, JSON.stringify(INITIAL_USER_ACCOUNTS));
     }
     if (!localStorage.getItem(this.auditKey)) {
       const initialLogs: AuditLog[] = [
@@ -667,6 +673,238 @@ class StoreService {
     // Keep last 500 logs in local storage
     if (logs.length > 500) logs.pop();
     localStorage.setItem(this.auditKey, JSON.stringify(logs));
+  }
+
+  // --------------------------------------------------------------------------
+  // User Management & RBAC Administration
+  // --------------------------------------------------------------------------
+  public getUsers(): UserAccount[] {
+    if (typeof window === 'undefined') return INITIAL_USER_ACCOUNTS;
+    const raw = localStorage.getItem(this.usersKey);
+    if (!raw) {
+      localStorage.setItem(this.usersKey, JSON.stringify(INITIAL_USER_ACCOUNTS));
+      return INITIAL_USER_ACCOUNTS;
+    }
+    try {
+      const parsed: UserAccount[] = JSON.parse(raw);
+      let needsResave = false;
+      parsed.forEach(u => {
+        const primaryRole = u.roles[0];
+        // Enforce RBAC policy: Counter staff must not have dashboard.view
+        if (primaryRole === 'STAFF' && u.permissions.includes('dashboard.view')) {
+          u.permissions = u.permissions.filter(p => p !== 'dashboard.view');
+          needsResave = true;
+        }
+      });
+      if (needsResave) {
+        localStorage.setItem(this.usersKey, JSON.stringify(parsed));
+      }
+      return parsed;
+    } catch {
+      return INITIAL_USER_ACCOUNTS;
+    }
+  }
+
+  public getUserById(id: string): UserAccount | undefined {
+    return this.getUsers().find(u => u.id === id);
+  }
+
+  public getUserByEmail(email: string): UserAccount | undefined {
+    const clean = email.toLowerCase().trim();
+    return this.getUsers().find(u => u.email.toLowerCase().trim() === clean);
+  }
+
+  public createUser(
+    params: {
+      fullName: string;
+      email: string;
+      mobile?: string;
+      role: UserRoleType;
+      password: string;
+      isActive?: boolean;
+    },
+    actor: { name: string; role: UserRoleType }
+  ): { success: boolean; error?: string; user?: UserAccount } {
+    if (actor.role !== 'SUPER_ADMIN') {
+      return { success: false, error: 'Authorization error: Only Super Admin can create new user accounts.' };
+    }
+
+    const cleanEmail = params.email.toLowerCase().trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    if (!params.fullName || params.fullName.trim().length < 2) {
+      return { success: false, error: 'Full name must be at least 2 characters.' };
+    }
+
+    if (!params.password || params.password.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters.' };
+    }
+
+    const users = this.getUsers();
+    if (users.some(u => u.email.toLowerCase().trim() === cleanEmail)) {
+      return { success: false, error: `A user with email "${cleanEmail}" already exists.` };
+    }
+
+    const newUserId = `usr-${params.role.toLowerCase().replace('_', '-')}-${Date.now().toString(36)}`;
+    const permissions = ROLE_PERMISSIONS_MAP[params.role] || [];
+
+    const newUser: UserAccount = {
+      id: newUserId,
+      fullName: params.fullName.trim(),
+      email: cleanEmail,
+      mobile: params.mobile?.trim() || undefined,
+      roles: [params.role],
+      permissions,
+      isActive: params.isActive !== undefined ? params.isActive : true,
+      password: params.password,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    users.push(newUser);
+    localStorage.setItem(this.usersKey, JSON.stringify(users));
+
+    this.addAuditLog({
+      actorName: actor.name,
+      actorRole: actor.role,
+      action: 'USER_CREATED',
+      entityType: 'USER',
+      entityId: newUser.id,
+      newValues: {
+        id: newUser.id,
+        fullName: newUser.fullName,
+        email: newUser.email,
+        role: params.role,
+        isActive: newUser.isActive,
+      },
+    });
+
+    this.notifySubscribers('USERS_UPDATED', users);
+    return { success: true, user: newUser };
+  }
+
+  public updateUserRole(
+    userId: string,
+    newRole: UserRoleType,
+    actor: { name: string; role: UserRoleType }
+  ): { success: boolean; error?: string; user?: UserAccount } {
+    if (actor.role !== 'SUPER_ADMIN') {
+      return { success: false, error: 'Only Super Admin can reassign user roles.' };
+    }
+
+    const users = this.getUsers();
+    const index = users.findIndex(u => u.id === userId);
+    if (index === -1) return { success: false, error: 'User account not found' };
+
+    const oldRole = users[index].roles[0];
+    users[index].roles = [newRole];
+    users[index].permissions = ROLE_PERMISSIONS_MAP[newRole] || [];
+    users[index].updatedAt = new Date().toISOString();
+
+    localStorage.setItem(this.usersKey, JSON.stringify(users));
+
+    this.addAuditLog({
+      actorName: actor.name,
+      actorRole: actor.role,
+      action: 'ROLE_REASSIGNED',
+      entityType: 'USER',
+      entityId: userId,
+      oldValues: { role: oldRole },
+      newValues: { role: newRole },
+    });
+
+    this.notifySubscribers('USERS_UPDATED', users);
+    return { success: true, user: users[index] };
+  }
+
+  public toggleUserActive(
+    userId: string,
+    actor: { name: string; role: UserRoleType }
+  ): { success: boolean; error?: string; user?: UserAccount } {
+    if (actor.role !== 'SUPER_ADMIN') {
+      return { success: false, error: 'Only Super Admin can activate or deactivate accounts.' };
+    }
+
+    const users = this.getUsers();
+    const index = users.findIndex(u => u.id === userId);
+    if (index === -1) return { success: false, error: 'User account not found' };
+
+    const prevActive = users[index].isActive;
+    users[index].isActive = !prevActive;
+    users[index].updatedAt = new Date().toISOString();
+
+    localStorage.setItem(this.usersKey, JSON.stringify(users));
+
+    this.addAuditLog({
+      actorName: actor.name,
+      actorRole: actor.role,
+      action: prevActive ? 'USER_DEACTIVATED' : 'USER_ACTIVATED',
+      entityType: 'USER',
+      entityId: userId,
+      oldValues: { isActive: prevActive },
+      newValues: { isActive: !prevActive },
+    });
+
+    this.notifySubscribers('USERS_UPDATED', users);
+    return { success: true, user: users[index] };
+  }
+
+  public changeUserPassword(
+    userId: string,
+    newPassword: string,
+    actor: { name: string; role: UserRoleType; userId?: string },
+    oldPassword?: string
+  ): { success: boolean; error?: string } {
+    const users = this.getUsers();
+    const index = users.findIndex(u => u.id === userId);
+    if (index === -1) return { success: false, error: 'User account not found.' };
+
+    const targetUser = users[index];
+
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'New password must be at least 6 characters long.' };
+    }
+
+    const isSuperAdminReset = actor.role === 'SUPER_ADMIN' && actor.userId !== userId;
+
+    if (!isSuperAdminReset) {
+      // Self-change or non-super-admin: must verify old password
+      if (!oldPassword) {
+        return { success: false, error: 'Current password is required.' };
+      }
+      if (targetUser.password && targetUser.password !== oldPassword) {
+        return { success: false, error: 'Incorrect current password.' };
+      }
+    }
+
+    if (targetUser.password === newPassword) {
+      return { success: false, error: 'New password must be different from current password.' };
+    }
+
+    targetUser.password = newPassword;
+    targetUser.updatedAt = new Date().toISOString();
+    users[index] = targetUser;
+
+    localStorage.setItem(this.usersKey, JSON.stringify(users));
+
+    this.addAuditLog({
+      actorName: actor.name,
+      actorRole: actor.role,
+      action: isSuperAdminReset ? 'USER_PASSWORD_RESET_BY_SUPER_ADMIN' : 'USER_PASSWORD_SELF_UPDATED',
+      entityType: 'USER',
+      entityId: userId,
+      newValues: {
+        targetUser: targetUser.fullName,
+        targetEmail: targetUser.email,
+        targetRole: targetUser.roles[0],
+        resetBy: actor.name,
+      },
+    });
+
+    this.notifySubscribers('USERS_UPDATED', users);
+    return { success: true };
   }
 }
 

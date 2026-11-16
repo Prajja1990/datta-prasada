@@ -4,6 +4,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { store } from '../../services/store';
 import { Order, OrderStatus } from '../../types';
 import { ThermalReceiptModal } from '../../components/printer/ThermalReceiptModal';
+import { ChangePasswordModal } from '../../components/auth/ChangePasswordModal';
 import { 
   ChefHat, 
   Clock, 
@@ -14,7 +15,8 @@ import {
   Play, 
   AlertTriangle,
   RefreshCw,
-  Maximize2
+  Maximize2,
+  Key
 } from 'lucide-react';
 
 export const KitchenDisplayPage: React.FC = () => {
@@ -24,6 +26,7 @@ export const KitchenDisplayPage: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [activeKOTOrder, setActiveKOTOrder] = useState<Order | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(true);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   const loadOrders = () => {
     // Only display active kitchen orders (ACCEPTED, PREPARING, READY, and PLACED)
@@ -81,6 +84,15 @@ export const KitchenDisplayPage: React.FC = () => {
           <div className="px-3 py-1.5 rounded-lg bg-stone-800 text-stone-300 text-xs font-mono">
             Active Tickets: <span className="text-amber-400 font-bold">{orders.length}</span>
           </div>
+
+          <button
+            onClick={() => setIsPasswordModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-gold-400 text-xs font-bold transition border border-stone-700"
+            title="Change Chef Account Password"
+          >
+            <Key className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Change Password</span>
+          </button>
 
           <button
             onClick={loadOrders}
@@ -309,6 +321,12 @@ export const KitchenDisplayPage: React.FC = () => {
           onClose={() => setActiveKOTOrder(null)}
         />
       )}
+
+      {/* Password Change Modal */}
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+      />
     </div>
   );
 };

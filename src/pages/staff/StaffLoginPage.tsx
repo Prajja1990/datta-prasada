@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { store } from '../../services/store';
 import { UserRoleType } from '../../types';
 import { 
   ShieldCheck, 
@@ -12,7 +13,8 @@ import {
   ArrowRight,
   Flame,
   AlertCircle,
-  ShieldAlert
+  ShieldAlert,
+  Key
 } from 'lucide-react';
 
 export const StaffLoginPage: React.FC = () => {
@@ -54,10 +56,13 @@ export const StaffLoginPage: React.FC = () => {
     try {
       const res = await loginWithCredentials(email, password);
       if (res.success) {
+        const storedUser = store.getUserByEmail(email);
+        const role = storedUser?.roles[0];
         const emailLower = email.toLowerCase();
-        if (emailLower.includes('admin') || emailLower.includes('manager') || emailLower.includes('super')) {
+
+        if (role === 'SUPER_ADMIN' || role === 'ADMIN' || emailLower.includes('admin') || emailLower.includes('manager') || emailLower.includes('super')) {
           navigate('/admin/dashboard');
-        } else if (emailLower.includes('kitchen') || emailLower.includes('chef')) {
+        } else if (role === 'KITCHEN_STAFF' || emailLower.includes('kitchen') || emailLower.includes('chef')) {
           navigate('/kitchen');
         } else {
           navigate(from);
@@ -231,6 +236,20 @@ export const StaffLoginPage: React.FC = () => {
               <ArrowRight className="w-4 h-4 text-gold-400" />
             </button>
           </form>
+
+          {/* Reference demo credentials */}
+          <div className="pt-3 border-t border-stone-100 text-[11px] text-stone-500 space-y-1.5">
+            <div className="font-bold text-stone-700 flex items-center gap-1">
+              <Key className="w-3 h-3 text-gold-600" />
+              <span>Default Account Passwords (or quick PIN: 1234):</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[10px]">
+              <div>Owner: <span className="text-purple-700 font-bold">SuperAdmin@123</span></div>
+              <div>Admin: <span className="text-gold-700 font-bold">Manager@123</span></div>
+              <div>Staff: <span className="text-blue-700 font-bold">Counter@123</span></div>
+              <div>Kitchen: <span className="text-amber-700 font-bold">Kitchen@123</span></div>
+            </div>
+          </div>
         </div>
 
         {/* Back link */}

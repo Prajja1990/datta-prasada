@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { store } from '../../services/store';
-import { Settings, Save, Check, Printer, Building2, Store } from 'lucide-react';
+import { ChangePasswordModal } from '../../components/auth/ChangePasswordModal';
+import { Settings, Save, Check, Printer, Building2, Store, Key, ShieldCheck } from 'lucide-react';
 
 export const AdminSettingsPage: React.FC = () => {
   const { user } = useAuth();
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   const [restaurantName, setRestaurantName] = useState('Datta Prasada');
   const [tagline, setTagline] = useState('Authentic Sakleshpur Taste in Bangalore');
@@ -208,6 +210,35 @@ export const AdminSettingsPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Account Security & Password */}
+        <div className="space-y-4 pt-4 border-t border-stone-100">
+          <h3 className="font-serif font-bold text-base text-stone-900 border-b border-stone-100 pb-2 flex items-center gap-2">
+            <Key className="w-4 h-4 text-gold-600" />
+            <span>Account Security & Access Credentials</span>
+          </h3>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-cream-50/60 border border-gold-200">
+            <div>
+              <div className="font-bold text-sm text-stone-900">{user?.fullName}</div>
+              <div className="text-xs text-stone-500">
+                {user?.email} • Role: <strong className="text-temple-800">{user?.roles[0].replace('_', ' ')}</strong>
+              </div>
+              <p className="text-[11px] text-stone-400 mt-0.5">
+                Keep your login password updated to prevent unauthorized access to store orders and reports.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsPasswordModalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gold-500 hover:bg-gold-600 text-temple-950 font-bold text-xs shadow-xs transition active:scale-95 shrink-0"
+            >
+              <Key className="w-3.5 h-3.5" />
+              <span>Change My Password</span>
+            </button>
+          </div>
+        </div>
+
         <div className="pt-4 flex justify-end">
           <button
             type="submit"
@@ -218,6 +249,12 @@ export const AdminSettingsPage: React.FC = () => {
           </button>
         </div>
       </form>
+
+      {/* Password Change Modal */}
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+      />
     </div>
   );
 };
