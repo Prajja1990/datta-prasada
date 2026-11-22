@@ -77,7 +77,8 @@ export const CheckoutPage: React.FC = () => {
         customerName,
         customerMobile,
         paymentMethod,
-        onSuccess: (payResult) => {
+        onSuccess: async (payResult) => {
+          try {
           // 2. Atomically create order with sequential token (DP-001, DP-002...)
           const orderItems = items.map(i => ({
             menuItemId: i.menuItem.id,
@@ -88,7 +89,7 @@ export const CheckoutPage: React.FC = () => {
             totalPrice: i.menuItem.price * i.quantity,
           }));
 
-          const createdOrder = store.createOrder({
+          const createdOrder = await store.createOrder({
             customerName,
             customerMobile,
             orderType,
@@ -101,7 +102,11 @@ export const CheckoutPage: React.FC = () => {
 
           // 3. Clear cart and navigate to confirmation screen
           clearCart();
-          navigate(`/order/${createdOrder.id}`);
+          navigate(`/order/${createdOrder.trackingToken}`);
+          } catch (orderError: any) {
+            setIsSubmitting(false);
+            setErrorMessage(orderError.message || 'Payment completed, but the order could not be saved. Please contact the restaurant before retrying.');
+          }
         },
         onFailure: (err) => {
           setIsSubmitting(false);

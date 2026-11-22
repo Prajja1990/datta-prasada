@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { store } from '../../services/store';
 import { ROLE_PERMISSIONS_MAP } from '../../services/auth';
+import { userAdmin } from '../../services/userAdmin';
+import { isSupabaseConfigured } from '../../lib/supabase';
 import { UserAccount, UserProfile, UserRoleType } from '../../types';
 import { CreateUserModal } from '../../components/admin/CreateUserModal';
 import { ChangePasswordModal } from '../../components/auth/ChangePasswordModal';
@@ -32,7 +34,7 @@ export const AdminUsersPage: React.FC = () => {
   const { user: currentUser, hasRole } = useAuth();
   const isSuperAdmin = hasRole('SUPER_ADMIN');
 
-  const [usersList, setUsersList] = useState<UserAccount[]>(() => store.getUsers());
+  const [usersList, setUsersList] = useState<UserAccount[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>('ALL');
 
@@ -46,15 +48,19 @@ export const AdminUsersPage: React.FC = () => {
 
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  const loadUsers = () => {
-    setUsersList(store.getUsers());
+  const loadUsers = async () => {
+    try {
+      setUsersList(isSupabaseConfigured ? await userAdmin.list() : store.getUsers());
+    } catch (error: any) {
+      showFeedback(error.message || 'Unable to load users from Supabase.', 'error');
+    }
   };
 
   useEffect(() => {
     loadUsers();
     const unsub = store.subscribe((eventType) => {
       if (eventType === 'USERS_UPDATED') {
-        loadUsers();
+        void loadUsers();
       }
     });
     return unsub;
@@ -65,9 +71,19 @@ export const AdminUsersPage: React.FC = () => {
     setTimeout(() => setFeedbackMessage(null), 3500);
   };
 
-  const handleToggleActive = (targetUser: UserAccount) => {
+  const handleToggleActive = async (targetUser: UserAccount) => {
     if (!isSuperAdmin) {
       alert('Only Super Admin can activate or deactivate staff accounts.');
+      return;
+    }
+    if (isSupabaseConfigured) {
+      try {
+        await userAdmin.setActive(targetUser.id, !targetUser.isActive);
+        showFeedback(`Account for ${targetUser.fullName} ${targetUser.isActive ? 'deactivated' : 'activated'}.`);
+        await loadUsers();
+      } catch (error: any) {
+        showFeedback(error.message || 'Failed to update account status.', 'error');
+      }
       return;
     }
     const res = store.toggleUserActive(
@@ -84,7 +100,7 @@ export const AdminUsersPage: React.FC = () => {
     }
   };
 
-  const handleUpdateRole = (e: React.FormEvent) => {
+  const handleUpdateRole = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser) return;
     if (!isSuperAdmin) {
@@ -92,6 +108,17 @@ export const AdminUsersPage: React.FC = () => {
       return;
     }
 
+    if (isSupabaseConfigured) {
+      try {
+        await userAdmin.setRole(editingUser.id, selectedRole);
+        showFeedback(`Role for ${editingUser.fullName} changed to ${selectedRole}.`);
+        setEditingUser(null);
+        await loadUsers();
+      } catch (error: any) {
+        showFeedback(error.message || 'Failed to reassign role.', 'error');
+      }
+      return;
+    }
     const res = store.updateUserRole(
       editingUser.id,
       selectedRole,

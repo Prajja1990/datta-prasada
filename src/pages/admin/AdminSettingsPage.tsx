@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import { homeContentFields } from '../../services/homeContentFields';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { store } from '../../services/store';
+import { loadRestaurantSettings, saveRestaurantSettings, loadHomeMenu } from '../../services/restaurantDatabase';
 import { ChangePasswordModal } from '../../components/auth/ChangePasswordModal';
 import { Settings, Save, Check, Printer, Building2, Store, Key, ShieldCheck } from 'lucide-react';
 
@@ -8,36 +9,60 @@ export const AdminSettingsPage: React.FC = () => {
   const { user } = useAuth();
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
-  const [restaurantName, setRestaurantName] = useState('Datta Prasada');
-  const [tagline, setTagline] = useState('Authentic Sakleshpur Taste in Bangalore');
-  const [taglineKn, setTaglineKn] = useState('ಬೆಂಗಳೂರಿನಲ್ಲಿ ಸಕಲೇಶಪುರದ ಅಸಲಿ ರುಚಿ');
-  const [address, setAddress] = useState('Balagere Main Road, Near Panathur Railway Bridge, Bangalore - 560087');
-  const [phone, setPhone] = useState('+91 98450 12345');
-  const [upiVpa, setUpiVpa] = useState('dattaprasada@icici');
-  const [tokenPrefix, setTokenPrefix] = useState('DP-');
-  const [gstRate, setGstRate] = useState(5);
+  const [homeContent, setHomeContent] = useState<Record<string, string>>({});
+  const [homeMenuOptions, setHomeMenuOptions] = useState<{ id: string; name: string }[]>([]);
+  const [openingHours, setOpeningHours] = useState('');
+  const [restaurantName, setRestaurantName] = useState('');
+  const [tagline, setTagline] = useState('');
+  const [taglineKn, setTaglineKn] = useState('');
+  const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
+  const [upiVpa, setUpiVpa] = useState('');
+  const [tokenPrefix, setTokenPrefix] = useState('');
+  const [gstRate, setGstRate] = useState(0);
   const [thermalWidth, setThermalWidth] = useState<'80mm' | '58mm'>('80mm');
   const [isSaved, setIsSaved] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSave = (e: React.FormEvent) => {
+  useEffect(() => {
+    let active = true;
+    loadRestaurantSettings().then(settings => {
+      if (!active) return;
+      setRestaurantName(settings.restaurant_name);
+      setHomeContent(settings.home_content || {});
+      setOpeningHours(settings.opening_hours);
+      setTagline(settings.tagline);
+      setTaglineKn(settings.tagline_kn);
+      setAddress(settings.address);
+      setPhone(settings.phone);
+      setUpiVpa(settings.upi_vpa);
+      setTokenPrefix(settings.token_prefix);
+      setGstRate(settings.gst_rate);
+      setThermalWidth(settings.thermal_width);
+    }).catch(e => { if (active) setError(e.message); })
+      .finally(() => { if (active) setIsLoading(false); });
+    loadHomeMenu().then(result => {
+      if (active) setHomeMenuOptions(result.menuItems.map(item => ({ id: item.id, name: item.name })));
+    }).catch(() => { /* Menu selection remains optional; settings loading reports its own errors. */ });
+    return () => { active = false; };
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    store.addAuditLog({
-      actorName: user?.fullName || 'Manager',
-      actorRole: user?.roles[0],
-      action: 'SETTINGS_UPDATED',
-      entityType: 'SETTING',
-      entityId: 'outlet-balagere-config',
-      newValues: {
-        restaurantName,
-        upiVpa,
-        tokenPrefix,
-        gstRate,
-        thermalWidth,
-      },
-    });
-
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3000);
+    setIsSaving(true);
+    setIsSaved(false);
+    setError(null);
+    try {
+      await saveRestaurantSettings({
+        home_content: homeContent, restaurant_name: restaurantName, opening_hours: openingHours, tagline, tagline_kn: taglineKn,
+        address, phone, upi_vpa: upiVpa, token_prefix: tokenPrefix,
+        gst_rate: gstRate, thermal_width: thermalWidth,
+      });
+      setIsSaved(true);
+    } catch (e: any) { setError(e.message || 'Unable to save settings.'); }
+    finally { setIsSaving(false); }
   };
 
   return (
@@ -51,6 +76,8 @@ export const AdminSettingsPage: React.FC = () => {
         </p>
       </div>
 
+      {error && <p role="alert" className="p-4 bg-red-50 text-red-800 rounded-xl">{error}</p>}
+      {isLoading && <p>Loading restaurant settings…</p>}
       {isSaved && (
         <div className="p-4 rounded-xl bg-green-50 border border-green-200 text-green-800 text-xs flex items-center gap-2">
           <Check className="w-4 h-4 text-green-600" />
@@ -59,6 +86,7 @@ export const AdminSettingsPage: React.FC = () => {
       )}
 
       <form onSubmit={handleSave} className="space-y-6 bg-white rounded-3xl border border-stone-200 p-6 sm:p-8 shadow-sm">
+        <fieldset disabled={isLoading || isSaving || (!!error && !restaurantName)} className="space-y-6">
         {/* Outlet Identity */}
         <div className="space-y-4">
           <h3 className="font-serif font-bold text-base text-stone-900 border-b border-stone-100 pb-2 flex items-center gap-2">
@@ -129,6 +157,14 @@ export const AdminSettingsPage: React.FC = () => {
           </div>
         </div>
 
+        <div>
+          <label className="block text-xs font-bold text-stone-700 mb-1">Contact Phone</label>
+          <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-stone-700 mb-1">Opening Hours</label>
+          <input type="text" value={openingHours} onChange={e => setOpeningHours(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />
+        </div>
         {/* Taxes & UPI Billing */}
         <div className="space-y-4 pt-4 border-t border-stone-100">
           <h3 className="font-serif font-bold text-base text-stone-900 border-b border-stone-100 pb-2">
@@ -210,6 +246,32 @@ export const AdminSettingsPage: React.FC = () => {
           </div>
         </div>
 
+        <section className="space-y-4 pt-4 border-t border-stone-100">
+          <h3 className="font-serif font-bold text-lg">Home Page Content</h3>
+          <p className="text-sm text-stone-500">Edit English and Kannada text, images, and the highlighted dish. Dish names, prices, descriptions, and category records are managed in Menu &amp; Categories.</p>
+          {[...new Set(homeContentFields.map(field => field.group))].map(group => (
+            <details key={group} className="rounded-xl border border-stone-200 p-4">
+              <summary className="font-bold cursor-pointer">{group}</summary>
+              <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                {homeContentFields.filter(field => field.group === group).map(field => (
+                  <label key={field.key} className="block space-y-1 text-xs font-semibold text-stone-700">
+                    <span>{field.label}</span>
+                    {field.key === 'special_menu_item_id' ? (
+                      <select value={homeContent[field.key] || ''} onChange={e => setHomeContent(previous => ({ ...previous, [field.key]: e.target.value }))} className="w-full border border-stone-200 rounded-xl p-2 text-sm">
+                        <option value="">First available featured dish</option>
+                        {homeContent[field.key] && !homeMenuOptions.some(item => item.id === homeContent[field.key]) && <option value={homeContent[field.key]}>Currently selected dish (unavailable)</option>}
+                        {homeMenuOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                      </select>
+                    ) : (
+                      <textarea rows={field.kind === 'textarea' ? 4 : 2} value={homeContent[field.key] || ''} onChange={e => setHomeContent(previous => ({ ...previous, [field.key]: e.target.value }))} className="w-full border border-stone-200 rounded-xl p-2 text-sm font-normal" />
+                    )}
+                  </label>
+                ))}
+              </div>
+            </details>
+          ))}
+        </section>
+
         {/* Account Security & Password */}
         <div className="space-y-4 pt-4 border-t border-stone-100">
           <h3 className="font-serif font-bold text-base text-stone-900 border-b border-stone-100 pb-2 flex items-center gap-2">
@@ -245,9 +307,10 @@ export const AdminSettingsPage: React.FC = () => {
             className="flex items-center gap-2 px-6 py-3 rounded-xl bg-temple-700 hover:bg-temple-800 text-white font-serif font-bold text-sm shadow-traditional transition active:scale-95"
           >
             <Save className="w-4 h-4 text-gold-400" />
-            <span>Save Operational Changes</span>
+            <span>{isSaving ? 'Saving…' : 'Save Operational Changes'}</span>
           </button>
         </div>
+        </fieldset>
       </form>
 
       {/* Password Change Modal */}

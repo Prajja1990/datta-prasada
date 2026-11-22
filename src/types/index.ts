@@ -52,6 +52,7 @@ export interface UserProfile {
 
 export interface UserAccount extends UserProfile {
   password?: string;
+  passwordHash?: string;
 }
 
 export interface AuthContextType {
@@ -60,7 +61,7 @@ export interface AuthContextType {
   isLoading: boolean;
   securityNotice: string | null;
   loginAs: (role: UserRoleType) => Promise<void>;
-  loginWithCredentials: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  loginWithCredentials: (email: string, pass: string) => Promise<{ success: boolean; error?: string; role?: UserRoleType }>;
   logout: () => Promise<void>;
   logoutFromAllDevices: () => Promise<void>;
   hasPermission: (permission: PermissionKey) => boolean;
@@ -168,7 +169,7 @@ export interface AuditLog {
   actorName: string;
   actorRole?: string;
   action: string;
-  entityType: 'ORDER' | 'MENU_ITEM' | 'CATEGORY' | 'USER' | 'PAYMENT' | 'SETTING';
+  entityType: 'ORDER' | 'MENU_ITEM' | 'CATEGORY' | 'USER' | 'PAYMENT' | 'SETTING' | 'ROLE_PERMISSION';
   entityId: string;
   oldValues?: Record<string, any>;
   newValues?: Record<string, any>;

@@ -34,16 +34,18 @@ export const StaffOrdersPage: React.FC = () => {
   const [activePrintOrder, setActivePrintOrder] = useState<Order | null>(null);
   const [printMode, setPrintMode] = useState<'RECEIPT' | 'KOT'>('RECEIPT');
 
-  const loadOrders = () => {
-    setOrders(store.getOrders());
+  const loadOrders = async () => {
+    try { setOrders(await store.getDatabaseOrders()); }
+    catch (error) { console.error('Staff orders load failed:', error); }
   };
 
   useEffect(() => {
-    loadOrders();
+    void loadOrders();
     const unsub = store.subscribe(() => {
-      loadOrders();
+      void loadOrders();
     });
-    return unsub;
+    const timer = window.setInterval(() => void loadOrders(), 5000);
+    return () => { unsub(); window.clearInterval(timer); };
   }, []);
 
   // Filter orders
@@ -58,22 +60,25 @@ export const StaffOrdersPage: React.FC = () => {
     return matchesFilter && matchesSearch;
   });
 
-  const handleStatusChange = (orderId: string, nextStatus: OrderStatus) => {
+  const handleStatusChange = async (orderId: string, nextStatus: OrderStatus) => {
     if (!user) return;
-    const res = store.updateOrderStatus(
+    const res = await store.updateDatabaseOrderStatus(
       orderId,
       nextStatus,
       user.fullName,
-      user.roles[0]
+      user.roles[0],
     );
     if (!res.success && res.error) {
       alert(res.error);
     }
+    void loadOrders();
   };
 
-  const handleMarkCashPaid = (orderId: string) => {
+  const handleMarkCashPaid = async (orderId: string) => {
     if (!user) return;
-    store.updatePaymentStatus(orderId, 'PAID', user.fullName, user.roles[0]);
+    const res = await store.updateDatabasePaymentStatus(orderId, 'PAID', user.fullName, user.roles[0]);
+    if (!res.success && res.error) alert(res.error);
+    void loadOrders();
   };
 
   return (

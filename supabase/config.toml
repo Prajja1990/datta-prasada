@@ -1,0 +1,11 @@
+project_id = "datta-prasada"
+
+# Login happens before an Auth JWT exists. The function verifies the password
+# server-side and never returns privileged credentials to the browser.
+[functions.legacy-login]
+verify_jwt = false
+
+# user-admin validates the supplied bearer token with auth.getUser itself,
+# then checks database permissions before every operation.
+[functions.user-admin]
+verify_jwt = false

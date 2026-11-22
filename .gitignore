@@ -30,3 +30,9 @@ build/
 .env.*
 !.env.example
 .DS_Store
+
+# Supabase CLI state and local database backup exports
+supabase/.temp/
+supabase/**/.temp/
+supabase/migrations/backups/
+*.tsbuildinfo

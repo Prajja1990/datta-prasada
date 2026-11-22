@@ -27,21 +27,18 @@ export const OrderConfirmationPage: React.FC = () => {
 
   useEffect(() => {
     if (!orderId) return;
-    const found = store.getOrderById(orderId) || store.getOrderByTrackingToken(orderId);
-    if (found) {
-      setOrder(found);
-      // Trigger festive celebration confetti
-      try {
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#D97706', '#1B4332', '#FBBF24', '#CCA86E'],
-        });
-      } catch (e) {
-        // Ignore in headless / test envs
+    let active = true;
+    void store.getDatabaseOrderByTrackingToken(orderId).then((found) => {
+      if (active && found) {
+        setOrder(found);
+        try {
+          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 }, colors: ['#D97706', '#1B4332', '#FBBF24', '#CCA86E'] });
+        } catch {
+          // Ignore when browser animation APIs are unavailable.
+        }
       }
-    }
+    }).catch((error) => console.error('Order confirmation lookup failed:', error));
+    return () => { active = false; };
   }, [orderId]);
 
   if (!order) {

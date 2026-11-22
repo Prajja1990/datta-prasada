@@ -56,30 +56,47 @@ export const TrackOrderPage: React.FC = () => {
     }
   };
 
-  const lookupOrder = (lookupKey: string) => {
+  const lookupOrder = async (lookupKey: string) => {
     if (!lookupKey.trim()) return;
     const clean = lookupKey.trim();
-    // Try lookup by trackingToken, tokenNumber, or orderId
-    const found = store.getOrderByTrackingToken(clean) || 
-                  store.getOrderByTokenNumber(clean) || 
-                  store.getOrderById(clean);
-
-    if (found) {
-      setOrder(found);
-      setSearchError(null);
-    } else {
+    try {
+      const found = await store.findDatabaseOrder(clean);
+      if (found) {
+        setOrder(found);
+        setSearchError(null);
+        return;
+      }
       setOrder(null);
       setSearchError(language === 'kn' ? 'ಆರ್ಡರ್ ಅಥವಾ ಟೋಕನ್ ಕಂಡುಬಂದಿಲ್ಲ' : 'No order found with this Token or Reference.');
+    } catch (error) {
+      console.error('Order tracking lookup failed:', error);
+      setOrder(null);
+      setSearchError(language === 'kn' ? 'ಆರ್ಡರ್ ಹುಡುಕಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ' : 'Could not load this order. Please retry.');
     }
   };
 
   useEffect(() => {
     if (token) {
-      lookupOrder(token);
+      void lookupOrder(token);
     }
   }, [token]);
 
   // Real-time listener for status changes
+  useEffect(() => {
+    if (!order?.trackingToken) return;
+    const timer = window.setInterval(() => {
+      void store.getDatabaseOrderByTrackingToken(order.trackingToken).then((freshOrder) => {
+        if (!freshOrder) return;
+        setOrder(freshOrder);
+        if (freshOrder.orderStatus === 'READY' && !hasPlayedChime) {
+          playReadyChime();
+          setHasPlayedChime(true);
+        }
+      }).catch((error) => console.error('Order tracking refresh failed:', error));
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [order?.trackingToken, hasPlayedChime]);
+
   useEffect(() => {
     const unsub = store.subscribe((eventType, payload) => {
       if (order && (eventType === 'ORDER_UPDATED' || eventType === 'ORDER_STATUS_READY')) {

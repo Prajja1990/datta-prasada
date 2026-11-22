@@ -1,287 +1,180 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { UserProfile, UserRoleType, PermissionKey, AuthContextType } from '../types';
-import { DEMO_USERS, hasPermission as checkPermission, hasRole as checkRole } from '../services/auth';
-import { store } from '../services/store';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { AuthContextType, PermissionKey, UserProfile, UserRoleType } from '../types';
+import { DEMO_USERS, INITIAL_USER_ACCOUNTS } from '../services/auth';
 import { sessionSecurity } from '../services/sessionSecurity';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { userAdmin } from '../services/userAdmin';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    const val = sessionSecurity.validateSession();
-    return val.valid && val.user ? val.user : null;
-  });
+async function loadProfile(userId: string, email = ''): Promise<UserProfile> {
+  const [{ data: profile, error: profileError }, { data: memberships, error: roleError }] = await Promise.all([
+    supabase.from('user_profiles').select('id, full_name, mobile, email, is_active, created_at').eq('id', userId).single(),
+    supabase.from('user_roles').select('role_id, roles(name)').eq('user_id', userId),
+  ]);
+  if (profileError) throw profileError;
+  if (roleError) throw roleError;
+  const roleIds = (memberships || []).map((entry: any) => entry.role_id);
+  const { data: grants, error: grantError } = roleIds.length
+    ? await supabase.from('role_permissions').select('permissions(permission_key)').in('role_id', roleIds)
+    : { data: [], error: null };
+  if (grantError) throw grantError;
+  const roles = (memberships || []).map((entry: any) => entry.roles?.name).filter(Boolean) as UserRoleType[];
+  return {
+    id: profile.id,
+    fullName: profile.full_name,
+    email: profile.email || email,
+    mobile: profile.mobile || undefined,
+    roles,
+    permissions: [...new Set((grants || []).map((entry: any) => entry.permissions?.permission_key).filter(Boolean))] as PermissionKey[],
+    isActive: profile.is_active,
+    createdAt: profile.created_at,
+  };
+}
 
-  const [isLoading, setIsLoading] = useState(false);
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
 
-  // Periodically validate session (anti-tamper, inactivity timeout, sliding window)
-  const performSecurityCheck = useCallback(() => {
-    const validation = sessionSecurity.validateSession();
-    if (validation.valid && validation.user) {
-      setUser(validation.user);
-    } else if (user) {
+  const refreshUser = useCallback(async (id: string, email?: string) => {
+    const profile = await loadProfile(id, email);
+    if (!profile.isActive) {
+      await supabase.auth.signOut();
       setUser(null);
-      if (validation.errorReason) {
-        setSecurityNotice(validation.errorReason);
-      }
+      setSecurityNotice('This account is inactive. Contact your administrator.');
+      return;
     }
-  }, [user]);
+    setUser(profile);
+  }, []);
 
-  // Periodic check every 60 seconds + user activity listener
   useEffect(() => {
-    const interval = setInterval(performSecurityCheck, 60 * 1000);
-
-    const onUserActivity = () => {
-      // Lightly touch session
-      sessionSecurity.validateSession();
-    };
-
-    window.addEventListener('click', onUserActivity, { passive: true });
-    window.addEventListener('keydown', onUserActivity, { passive: true });
-
-    // Multi-tab session synchronization
-    const unsubTabs = sessionSecurity.subscribeToSessionEvents((type, payload) => {
-      if (type === 'SESSION_TERMINATED' || type === 'GLOBAL_REVOCATION') {
-        setUser(null);
-        setSecurityNotice('Your session was terminated or signed out from another tab/device.');
-      } else if (type === 'SESSION_ESTABLISHED') {
-        const val = sessionSecurity.validateSession();
-        if (val.valid && val.user) {
-          setUser(val.user);
-          setSecurityNotice(null);
-        }
+    if (!isSupabaseConfigured) {
+      const cached = sessionSecurity.validateSession();
+      if (cached.valid) setUser(cached.user || null);
+      setIsLoading(false);
+      return;
+    }
+    let alive = true;
+    supabase.auth.getSession().then(async ({ data, error }: any) => {
+      if (!alive) return;
+      if (error) setSecurityNotice(error.message);
+      if (data.session) {
+        try { await refreshUser(data.session.user.id, data.session.user.email); }
+        catch (e: any) { setSecurityNotice(e.message || 'Unable to load your account profile.'); }
       }
+      if (alive) setIsLoading(false);
     });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event: string, session: any) => {
+      if (!session) { setUser(null); return; }
+      setTimeout(() => refreshUser(session.user.id, session.user.email).catch((e) => setSecurityNotice(e.message)), 0);
+    });
+    return () => { alive = false; listener.subscription.unsubscribe(); };
+  }, [refreshUser]);
 
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('click', onUserActivity);
-      window.removeEventListener('keydown', onUserActivity);
-      unsubTabs();
-    };
-  }, [performSecurityCheck]);
-
-  // 1-Click Role Switcher (with cryptographic session generation)
-  const loginAs = async (role: UserRoleType) => {
-    setIsLoading(true);
-    setSecurityNotice(null);
-    try {
-      const storedUsers = store.getUsers();
-      const matchedUser = storedUsers.find(u => u.roles.includes(role) && u.isActive) || DEMO_USERS[role];
-      const securePayload = sessionSecurity.createSession(matchedUser);
-
-      setUser({
-        id: securePayload.userId,
-        email: securePayload.email,
-        fullName: securePayload.fullName,
-        roles: securePayload.roles,
-        permissions: securePayload.permissions,
-        isActive: true,
-        createdAt: new Date(securePayload.createdAt).toISOString(),
-      });
-
-      store.addAuditLog({
-        actorId: matchedUser.id,
-        actorName: matchedUser.fullName,
-        actorRole: role,
-        action: 'SECURE_SESSION_LOGIN',
-        entityType: 'USER',
-        entityId: matchedUser.id,
-        newValues: {
-          sessionId: securePayload.sessionId,
-          role,
-          fingerprint: securePayload.fingerprint,
-        },
-      });
-    } finally {
-      setIsLoading(false);
+  const loginWithCredentials: AuthContextType['loginWithCredentials'] = async (email, password) => {
+    if (!isSupabaseConfigured) {
+      const identifier = email.trim().toLowerCase();
+      const match = INITIAL_USER_ACCOUNTS.find((account) => account.email.toLowerCase() === identifier && account.password === password);
+      if (!match) return { success: false, error: 'Invalid email or password.' };
+      sessionSecurity.createSession(match);
+      setUser(match);
+      return { success: true, role: match.roles[0] };
     }
-  };
-
-  // Secure Credential Login (with rate-limiting & anti-brute-force)
-  const loginWithCredentials = async (email: string, pass: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
-    setSecurityNotice(null);
-    const identifier = email.toLowerCase().trim();
-
     try {
-      // 1. Check Rate Limit (Anti-Brute-Force Guard)
-      const rateCheck = sessionSecurity.checkRateLimit(identifier);
-      if (!rateCheck.allowed) {
-        return {
-          success: false,
-          error: `Account temporarily locked due to repeated failed attempts. Please retry in ${rateCheck.waitSeconds}s.`,
-        };
-      }
+      const normalizedEmail = email.trim().toLowerCase();
+      let { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
 
-      // 2. Validate password / credentials
-      if (!pass || pass.length < 4) {
-        sessionSecurity.recordFailedLogin(identifier);
-        return { success: false, error: 'Password must be at least 4 characters.' };
-      }
-
-      // Retrieve user from persistent user store
-      const storedUser = store.getUserByEmail(identifier);
-      let matchedUser = storedUser || null;
-
-      if (!matchedUser) {
-        // Fallback for demo role identifiers
-        if (identifier.includes('super')) matchedUser = DEMO_USERS.SUPER_ADMIN;
-        else if (identifier.includes('admin') || identifier.includes('manager')) matchedUser = DEMO_USERS.ADMIN;
-        else if (identifier.includes('kitchen') || identifier.includes('chef')) matchedUser = DEMO_USERS.KITCHEN_STAFF;
-        else if (identifier.includes('staff') || identifier.includes('counter')) matchedUser = DEMO_USERS.STAFF;
-        else if (identifier.includes('guest') || identifier.includes('customer')) matchedUser = DEMO_USERS.CUSTOMER;
-      }
-
-      if (!matchedUser) {
-        sessionSecurity.recordFailedLogin(identifier);
-        return { success: false, error: 'No account found matching this email address.' };
-      }
-
-      if (!matchedUser.isActive) {
-        return { success: false, error: 'This account has been deactivated. Please contact Super Admin.' };
-      }
-
-      // Check password if stored password exists
-      if (storedUser && storedUser.password) {
-        const matches = pass === storedUser.password || pass === '1234';
-        if (!matches) {
-          sessionSecurity.recordFailedLogin(identifier);
-          return { success: false, error: 'Invalid password. Please check your credentials.' };
+      // Existing installations may still have credentials only in user_accounts.
+      // Verify those credentials server-side, provision/sync the Auth identity,
+      // then establish a normal Supabase Auth session for all RLS-protected APIs.
+      const isInvalidCredentials = error && (
+        error.code === 'invalid_credentials' ||
+        error.code === 'email_not_confirmed' ||
+        error.message.toLowerCase().includes('invalid login credentials')
+      );
+      if (isInvalidCredentials) {
+        const { error: bridgeError } = await supabase.functions.invoke('legacy-login', {
+          body: { email: normalizedEmail, password },
+        });
+        if (bridgeError) {
+          let message = bridgeError.message;
+          if (bridgeError.name === 'FunctionsFetchError' || message.includes('Failed to send a request')) {
+            message = 'The login service is unreachable. Deploy the legacy-login Supabase Edge Function to the configured project, then try again.';
+          }
+          try {
+            const response = (bridgeError as any).context;
+            const body = response?.json ? await response.json() : null;
+            if (body?.error) message = body.error;
+          } catch { /* retain the function error message */ }
+          return { success: false, error: message || 'Invalid email or password.' };
         }
+        const retry = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+        data = retry.data;
+        error = retry.error;
       }
 
-      // Record success & clear rate limits
-      sessionSecurity.recordSuccessfulLogin(identifier);
-
-      // 3. Create cryptographically signed and fingerprinted session
-      const securePayload = sessionSecurity.createSession(matchedUser);
-
-      setUser({
-        id: securePayload.userId,
-        email: securePayload.email,
-        fullName: securePayload.fullName,
-        roles: securePayload.roles,
-        permissions: securePayload.permissions,
-        isActive: true,
-        createdAt: new Date(securePayload.createdAt).toISOString(),
-      });
-
-      store.addAuditLog({
-        actorId: matchedUser.id,
-        actorName: matchedUser.fullName,
-        actorRole: matchedUser.roles[0],
-        action: 'SECURE_CREDENTIAL_LOGIN_SUCCESS',
-        entityType: 'USER',
-        entityId: matchedUser.id,
-        newValues: {
-          email: identifier,
-          sessionId: securePayload.sessionId,
-          fingerprint: securePayload.fingerprint,
-        },
-      });
-
-      return { success: true };
-    } catch (err: any) {
-      sessionSecurity.recordFailedLogin(identifier);
-      return { success: false, error: err.message || 'Authentication error.' };
-    } finally {
-      setIsLoading(false);
-    }
+      if (error) return { success: false, error: error.message };
+      const profile = await loadProfile(data.user.id, data.user.email);
+      if (!profile.isActive) {
+        await supabase.auth.signOut();
+        return { success: false, error: 'This account is inactive. Contact your administrator.' };
+      }
+      setUser(profile);
+      return { success: true, role: profile.roles[0] };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Unable to sign in.' };
+    } finally { setIsLoading(false); }
   };
 
-  const changePassword = async (params: {
-    oldPassword?: string;
-    newPassword: string;
-    targetUserId?: string;
-  }): Promise<{ success: boolean; error?: string }> => {
-    if (!user) {
-      return { success: false, error: 'You must be signed in to change password.' };
+  const loginAs: AuthContextType['loginAs'] = async (role) => {
+    if (isSupabaseConfigured) {
+      setSecurityNotice('Demo role switching is disabled for a connected database. Sign in with your assigned account.');
+      return;
     }
+    const demo = DEMO_USERS[role];
+    sessionSecurity.createSession(demo);
+    setUser(demo);
+  };
 
-    const targetUserId = params.targetUserId || user.id;
-    const isTargetingOther = targetUserId !== user.id;
-
-    if (isTargetingOther && !user.roles.includes('SUPER_ADMIN')) {
-      return { success: false, error: 'Unauthorized: Only Super Admin can change passwords for other accounts.' };
+  const changePassword: AuthContextType['changePassword'] = async ({ oldPassword, newPassword, targetUserId }) => {
+    if (!isSupabaseConfigured || !supabase) return { success: false, error: 'Password changes require a connected Supabase project.' };
+    if (!user) return { success: false, error: 'Sign in before changing a password.' };
+    if (targetUserId && targetUserId !== user.id) {
+      if (!user.roles.includes('SUPER_ADMIN')) return { success: false, error: 'Only a Super Admin can reset another account password.' };
+      try {
+        await userAdmin.setPassword(targetUserId, newPassword);
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e.message || 'Unable to reset this password.' };
+      }
     }
-
-    const res = store.changeUserPassword(
-      targetUserId,
-      params.newPassword,
-      { name: user.fullName, role: user.roles[0], userId: user.id },
-      params.oldPassword
-    );
-
-    return res;
+    const { data: session } = await supabase.auth.getSession();
+    if (oldPassword && session.data.session?.user.email) {
+      const { error } = await supabase.auth.signInWithPassword({ email: session.data.session.user.email, password: oldPassword });
+      if (error) return { success: false, error: 'Current password is incorrect.' };
+    }
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    return error ? { success: false, error: error.message } : { success: true };
   };
 
   const logout = async () => {
-    sessionSecurity.terminateSession('USER_VOLUNTARY_LOGOUT');
+    if (isSupabaseConfigured) await supabase.auth.signOut();
+    else sessionSecurity.terminateSession('USER_VOLUNTARY_LOGOUT');
     setUser(null);
   };
+  const logoutFromAllDevices = async () => logout();
+  const hasPermission = (permission: PermissionKey) => !!user?.isActive && user.permissions.includes(permission);
+  const hasAnyPermission = (permissions: PermissionKey[]) => permissions.some(hasPermission);
+  const hasRole = (role: UserRoleType) => !!user?.isActive && user.roles.includes(role);
 
-  const logoutFromAllDevices = async () => {
-    if (user) {
-      sessionSecurity.revokeAllUserSessions(user.id);
-      setUser(null);
-      store.addAuditLog({
-        actorId: user.id,
-        actorName: user.fullName,
-        actorRole: user.roles[0],
-        action: 'REVOKE_ALL_SESSIONS_COMPLETED',
-        entityType: 'USER',
-        entityId: user.id,
-      });
-    }
-  };
-
-  const hasPermission = (permission: PermissionKey): boolean => {
-    // Dynamic re-validation against tamper
-    const validation = sessionSecurity.validateSession();
-    if (!validation.valid || !validation.user) return false;
-    return checkPermission(validation.user, permission);
-  };
-
-  const hasAnyPermission = (permissions: PermissionKey[]): boolean => {
-    const validation = sessionSecurity.validateSession();
-    if (!validation.valid || !validation.user) return false;
-    return permissions.some(p => validation.user!.permissions.includes(p));
-  };
-
-  const hasRole = (role: UserRoleType): boolean => {
-    const validation = sessionSecurity.validateSession();
-    if (!validation.valid || !validation.user) return false;
-    return checkRole(validation.user, role);
-  };
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated: !!user,
-        isLoading,
-        securityNotice,
-        loginAs,
-        loginWithCredentials,
-        logout,
-        logoutFromAllDevices,
-        hasPermission,
-        hasAnyPermission,
-        hasRole,
-        changePassword,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = useMemo(() => ({ user, isAuthenticated: !!user, isLoading, securityNotice, loginAs, loginWithCredentials, logout, logoutFromAllDevices, hasPermission, hasAnyPermission, hasRole, changePassword }), [user, isLoading, securityNotice]);
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };

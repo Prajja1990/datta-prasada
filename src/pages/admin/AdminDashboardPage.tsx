@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { store } from '../../services/store';
+import { loadReportOrders } from '../../services/restaurantDatabase';
 import { Order } from '../../types';
 import { Link } from 'react-router-dom';
 import { 
@@ -18,21 +18,25 @@ import {
 export const AdminDashboardPage: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
 
-  const loadData = () => {
-    setOrders(store.getOrders());
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadData = async () => {
+    try {
+      setOrders(await loadReportOrders());
+      setLoadError(null);
+    } catch (error: any) {
+      setLoadError(error.message || 'Unable to load database orders.');
+    }
   };
 
   useEffect(() => {
-    loadData();
-    const unsub = store.subscribe(() => {
-      loadData();
-    });
-    return unsub;
+    void loadData();
+    const timer = window.setInterval(() => void loadData(), 15000);
+    return () => { window.clearInterval(timer); };
   }, []);
 
   // Today's orders
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayOrders = orders.filter(o => o.tokenDate === todayStr || o.createdAt.startsWith(todayStr));
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  const todayOrders = orders.filter(o => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(o.createdAt)) === todayStr);
 
   // Metrics
   const totalRevenue = todayOrders.reduce((sum, o) => o.paymentStatus === 'PAID' ? sum + o.totalAmount : sum, 0);
@@ -57,6 +61,7 @@ export const AdminDashboardPage: React.FC = () => {
 
   return (
     <div className="p-6 sm:p-8 space-y-8 max-w-7xl mx-auto">
+      {loadError && <p role="alert" className="p-4 bg-red-50 text-red-800 rounded-xl">{loadError}</p>}
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

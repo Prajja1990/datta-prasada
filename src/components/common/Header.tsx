@@ -1,3 +1,4 @@
+import { usePublicRestaurantProfile } from '../../services/publicRestaurantProfile';
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useLanguage } from '../../context/LanguageContext';
@@ -21,6 +22,7 @@ import {
 
 export const Header: React.FC = () => {
   const { language, toggleLanguage, t } = useLanguage();
+  const { profile } = usePublicRestaurantProfile();
   const { itemCount } = useCart();
   const { user, isAuthenticated, logout } = useAuth();
   const location = useLocation();
@@ -35,9 +37,9 @@ export const Header: React.FC = () => {
       <div className="bg-gradient-to-r from-temple-900 via-temple-800 to-temple-900 text-gold-300 text-[11px] font-medium py-1 px-4 text-center tracking-wide flex items-center justify-center gap-2 border-b border-gold-700/30">
         <span className="text-gold-400">॥ ಶ್ರೀ ಗುರುದೇವ ದತ್ತ ॥</span>
         <span className="hidden sm:inline text-gold-500">•</span>
-        <span className="hidden sm:inline">{t.brand.tagline}</span>
+        <span className="hidden sm:inline">{language === 'kn' ? profile?.tagline_kn : profile?.tagline}</span>
         <span className="hidden md:inline text-gold-500">•</span>
-        <span className="hidden md:inline">{t.brand.location}</span>
+        <span className="hidden md:inline">{profile?.address}</span>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -47,18 +49,18 @@ export const Header: React.FC = () => {
             {/* Logo Emblem */}
             <div className="relative w-14 h-14 rounded-2xl bg-white overflow-hidden p-0.5 border-2 border-gold-400 shadow-traditional transition-transform group-hover:scale-105 shrink-0 flex items-center justify-center">
               <img
-                src="/logo.jpg"
-                alt="Datta Prasada"
-                className="w-full h-full object-cover"
+                src={profile?.home_content.logo_url || undefined}
+                alt={profile?.restaurant_name || 'Restaurant logo'}
+                className="w-full h-full object-contain object-center"
               />
             </div>
 
             <div className="flex flex-col">
               <span className="font-serif font-black text-2xl tracking-tight text-temple-900 leading-none group-hover:text-gold-700 transition">
-                {t.brand.name}
+                {profile?.restaurant_name}
               </span>
               <span className="text-[11px] font-medium tracking-wide text-gold-700 mt-1">
-                {t.brand.tagline}
+                {language === 'kn' ? profile?.tagline_kn : profile?.tagline}
               </span>
             </div>
           </Link>
@@ -257,7 +259,8 @@ export const Header: React.FC = () => {
 };
 
 export const Footer: React.FC = () => {
-  const { t } = useLanguage();
+  const { profile } = usePublicRestaurantProfile();
+  const { t, language } = useLanguage();
 
   return (
     <footer className="bg-gradient-to-b from-temple-900 to-[#05110d] text-cream-100 pt-16 pb-12 border-t-4 border-gold-600">
@@ -268,17 +271,17 @@ export const Footer: React.FC = () => {
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-xl bg-white overflow-hidden p-0.5 border border-gold-400 shrink-0">
                 <img
-                  src="/logo.jpg"
-                  alt="Datta Prasada"
-                  className="w-full h-full object-cover"
+                  src={profile?.home_content.logo_url || undefined}
+                  alt={profile?.restaurant_name || 'Restaurant logo'}
+                  className="w-full h-full object-contain object-center"
                 />
               </div>
               <span className="font-serif font-black text-2xl text-gold-400 tracking-wide">
-                {t.brand.name}
+                {profile?.restaurant_name}
               </span>
             </div>
             <p className="text-stone-300 text-sm leading-relaxed max-w-md">
-              {t.home.ourStoryP1}
+              {profile?.home_content[language === 'kn' ? 'home_ourStoryP1_kn' : 'home_ourStoryP1']}
             </p>
             <div className="flex items-center gap-2 text-gold-300 text-xs font-semibold">
               <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-ping" />
@@ -292,29 +295,25 @@ export const Footer: React.FC = () => {
               Service Timings
             </h4>
             <div className="text-sm text-stone-300 space-y-1">
-              <p className="font-semibold text-white">Everyday (All 7 Days)</p>
-              <p>Morning Breakfast: 6:30 AM – 12:30 PM</p>
-              <p>Evening Snacks: 4:00 PM – 10:30 PM</p>
+              <p>{profile?.opening_hours}</p>
             </div>
           </div>
 
           {/* Outlet Contact */}
           <div className="space-y-3">
             <h4 className="font-serif font-bold text-gold-400 text-base uppercase tracking-wider">
-              Balagere Outlet
+              {profile?.restaurant_name}
             </h4>
             <div className="text-sm text-stone-300 space-y-1">
-              <p>Balagere Main Road,</p>
-              <p>Near Panathur Railway Bridge,</p>
-              <p>Varthur - Balagere, Bangalore - 560087</p>
-              <p className="pt-2 text-gold-300 font-medium">Helpline: +91 98450 12345</p>
+              <p>{profile?.address}</p>
+              <p className="pt-2 text-gold-300 font-medium">{profile?.phone}</p>
             </div>
           </div>
         </div>
 
         {/* Bottom Credits */}
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between text-xs text-stone-400 gap-4">
-          <p>© {new Date().getFullYear()} Datta Prasada. All Rights Reserved. ॥ ಶ್ರೀ ಗುರುದೇವ ದತ್ತ ॥</p>
+          <p>© {new Date().getFullYear()} {profile?.restaurant_name}. All Rights Reserved. ॥ ಶ್ರೀ ಗುರುದೇವ ದತ್ತ ॥</p>
           <div className="flex items-center gap-4">
             <Link to="/staff/login" className="hover:text-gold-400 transition">
               Staff Portal

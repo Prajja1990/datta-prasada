@@ -1,15 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   SYSTEM_PERMISSIONS, 
   ROLE_PERMISSIONS_MAP, 
   PermissionDefinition 
 } from '../../services/auth';
-import { UserRoleType } from '../../types';
+import { store } from '../../services/store';
+import { UserRoleType, PermissionKey } from '../../types';
 import { 
   ShieldCheck, 
   Search, 
-  Filter, 
   Check, 
   Minus, 
   Crown, 
@@ -18,10 +18,14 @@ import {
   UserCheck, 
   User as UserIcon,
   Info,
-  Key,
-  Shield,
   Layers,
-  Table as TableIcon
+  Table as TableIcon,
+  RotateCcw,
+  Sparkles,
+  AlertTriangle,
+  X,
+  Sliders,
+  Filter
 } from 'lucide-react';
 
 const ROLES_LIST: {
@@ -30,6 +34,8 @@ const ROLES_LIST: {
   badge: string;
   icon: React.ComponentType<{ className?: string }>;
   color: string;
+  activeBg: string;
+  toggleBg: string;
 }[] = [
   {
     role: 'SUPER_ADMIN',
@@ -37,13 +43,17 @@ const ROLES_LIST: {
     badge: 'Owner',
     icon: Crown,
     color: 'text-purple-700 bg-purple-100 border-purple-300',
+    activeBg: 'bg-purple-50 text-purple-900 border-purple-300 hover:bg-purple-100',
+    toggleBg: 'bg-purple-600',
   },
   {
     role: 'ADMIN',
     title: 'Restaurant Admin',
     badge: 'Manager',
     icon: UserCheck,
-    color: 'text-gold-800 bg-gold-100 border-gold-300',
+    color: 'text-amber-800 bg-amber-100 border-amber-300',
+    activeBg: 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100',
+    toggleBg: 'bg-amber-600',
   },
   {
     role: 'STAFF',
@@ -51,28 +61,57 @@ const ROLES_LIST: {
     badge: 'Cashier / Billing',
     icon: Store,
     color: 'text-blue-800 bg-blue-100 border-blue-300',
+    activeBg: 'bg-blue-50 text-blue-900 border-blue-300 hover:bg-blue-100',
+    toggleBg: 'bg-blue-600',
   },
   {
     role: 'KITCHEN_STAFF',
     title: 'Kitchen Chef',
     badge: 'KDS Cook',
     icon: ChefHat,
-    color: 'text-amber-800 bg-amber-100 border-amber-300',
+    color: 'text-orange-800 bg-orange-100 border-orange-300',
+    activeBg: 'bg-orange-50 text-orange-900 border-orange-300 hover:bg-orange-100',
+    toggleBg: 'bg-orange-600',
   },
   {
     role: 'CUSTOMER',
     title: 'Customer',
     badge: 'Guest',
     icon: UserIcon,
-    color: 'text-stone-800 bg-stone-100 border-stone-300',
+    color: 'text-emerald-800 bg-emerald-100 border-emerald-300',
+    activeBg: 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100',
+    toggleBg: 'bg-emerald-600',
   },
 ];
 
 export const AdminPermissionsPage: React.FC = () => {
-  const { hasRole } = useAuth();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'MATRIX' | 'DIRECTORY'>('MATRIX');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ENABLED_ONLY' | 'RESTRICTED_ONLY'>('ALL');
+  
+  // Dynamic Role Permissions Matrix loaded from persistent store
+  const [matrix, setMatrix] = useState<Record<UserRoleType, PermissionKey[]>>(() => store.getRolePermissionsMap());
+  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [showResetModal, setShowResetModal] = useState(false);
+
+  // Sync state when store emits update
+  useEffect(() => {
+    const unsub = store.subscribe((type) => {
+      if (type === 'ROLE_PERMISSIONS_UPDATED') {
+        setMatrix(store.getRolePermissionsMap());
+      }
+    });
+    return unsub;
+  }, []);
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), 4500);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
 
   const domains = Array.from(new Set(SYSTEM_PERMISSIONS.map(p => p.domain)));
 
@@ -89,63 +128,141 @@ export const AdminPermissionsPage: React.FC = () => {
     return matchesDomain && matchesSearch;
   });
 
+  const handleToggle = (role: UserRoleType, permissionKey: PermissionKey, nextState: boolean) => {
+    const actor = {
+      name: user?.fullName || 'Super Admin',
+      role: user?.roles[0] || 'SUPER_ADMIN',
+    };
+
+    const res = store.toggleRolePermission(role, permissionKey, nextState, actor);
+    if (!res.success) {
+      setToastMessage({
+        type: 'error',
+        text: res.error || 'Failed to update privilege.',
+      });
+      return;
+    }
+
+    const roleInfo = ROLES_LIST.find(r => r.role === role);
+    const permInfo = SYSTEM_PERMISSIONS.find(p => p.key === permissionKey);
+    setToastMessage({
+      type: 'success',
+      text: `${nextState ? 'Enabled' : 'Disabled'} "${permInfo?.name || permissionKey}" for ${roleInfo?.title || role}.`,
+    });
+    setMatrix(store.getRolePermissionsMap());
+  };
+
+  const handleResetToDefault = () => {
+    const actor = {
+      name: user?.fullName || 'Super Admin',
+      role: user?.roles[0] || 'SUPER_ADMIN',
+    };
+    const res = store.resetRolePermissionsToDefault(actor);
+    if (res.success) {
+      setMatrix(store.getRolePermissionsMap());
+      setToastMessage({
+        type: 'info',
+        text: 'System Permissions & Privilege Matrix reset to factory defaults.',
+      });
+      setShowResetModal(false);
+    } else {
+      setToastMessage({
+        type: 'error',
+        text: res.error || 'Failed to reset privileges.',
+      });
+    }
+  };
+
   return (
     <div className="p-6 sm:p-8 space-y-6 max-w-7xl mx-auto pb-28 animate-fadeIn">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className={`p-4 rounded-2xl border shadow-md flex items-center justify-between gap-3 text-xs font-semibold animate-slideDown ${
+          toastMessage.type === 'success' 
+            ? 'bg-emerald-50 text-emerald-900 border-emerald-300' 
+            : toastMessage.type === 'error'
+            ? 'bg-red-50 text-red-900 border-red-300'
+            : 'bg-blue-50 text-blue-900 border-blue-300'
+        }`}>
+          <div className="flex items-center gap-2">
+            {toastMessage.type === 'success' && <Check className="w-4 h-4 text-emerald-600 shrink-0" />}
+            {toastMessage.type === 'error' && <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />}
+            {toastMessage.type === 'info' && <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />}
+            <span>{toastMessage.text}</span>
+          </div>
+          <button onClick={() => setToastMessage(null)} className="p-1 hover:opacity-75">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-stone-200 pb-5">
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gold-100 text-gold-900 text-xs font-bold mb-1.5 border border-gold-300">
             <ShieldCheck className="w-3.5 h-3.5 text-gold-700" />
-            <span>Enterprise RBAC System Directory</span>
+            <span>Interactive RBAC Privilege Matrix</span>
           </div>
           <h1 className="font-serif font-black text-3xl text-stone-900">
             System Permissions & Privilege Matrix
           </h1>
           <p className="text-stone-500 text-xs sm:text-sm mt-0.5">
-            Complete catalogue of all 27 operational capabilities, capability keys, and role entitlement boundaries
+            Enable or disable granular operational privileges for each system role with real-time enforcement
           </p>
         </div>
 
-        {/* View Toggle */}
-        <div className="flex items-center p-1 rounded-2xl bg-stone-200 border border-stone-300 self-start sm:self-auto">
+        {/* Action Controls */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
           <button
-            onClick={() => setActiveTab('MATRIX')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
-              activeTab === 'MATRIX'
-                ? 'bg-white text-temple-900 shadow-sm'
-                : 'text-stone-600 hover:text-stone-900'
-            }`}
+            onClick={() => setShowResetModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 hover:text-stone-900 transition shadow-xs active:scale-95"
+            title="Reset role permissions to initial factory defaults"
           >
-            <TableIcon className="w-3.5 h-3.5 text-gold-600" />
-            <span>RBAC Matrix</span>
+            <RotateCcw className="w-3.5 h-3.5 text-stone-500" />
+            <span>Reset Defaults</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('DIRECTORY')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
-              activeTab === 'DIRECTORY'
-                ? 'bg-white text-temple-900 shadow-sm'
-                : 'text-stone-600 hover:text-stone-900'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5 text-gold-600" />
-            <span>Permissions Catalogue</span>
-          </button>
+          {/* View Toggle */}
+          <div className="flex items-center p-1 rounded-2xl bg-stone-200 border border-stone-300">
+            <button
+              onClick={() => setActiveTab('MATRIX')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
+                activeTab === 'MATRIX'
+                  ? 'bg-white text-temple-900 shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              <TableIcon className="w-3.5 h-3.5 text-gold-600" />
+              <span>RBAC Matrix</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('DIRECTORY')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
+                activeTab === 'DIRECTORY'
+                  ? 'bg-white text-temple-900 shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-gold-600" />
+              <span>Catalogue</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Counter Staff Isolation Notice */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-50 via-cream-50 to-blue-50 border border-blue-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-blue-950">
+      {/* Interactive Guidance Banner */}
+      <div className="p-4 rounded-2xl bg-gradient-to-r from-cream-100 via-gold-50 to-cream-100 border border-gold-300/80 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-stone-800">
         <div className="flex items-start sm:items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center shrink-0 border border-blue-300">
-            <Store className="w-5 h-5 text-blue-700" />
+          <div className="w-9 h-9 rounded-xl bg-gold-200 text-gold-900 flex items-center justify-center shrink-0 border border-gold-400">
+            <Sliders className="w-5 h-5 text-gold-800" />
           </div>
           <div>
-            <div className="font-bold text-sm text-blue-900">
-              Counter Staff Operational Access Policy
+            <div className="font-bold text-sm text-stone-900">
+              Interactive Privilege Controls Enabled
             </div>
-            <p className="text-blue-800 text-xs mt-0.5">
-              Counter Staff (<code className="font-mono text-[11px] bg-blue-100/80 px-1 py-0.5 rounded">STAFF</code>) are restricted from executive business overview analytics (<code className="font-mono text-[11px] bg-blue-100/80 px-1 py-0.5 rounded">dashboard.view</code>). Only <strong>Live Orders</strong> (<code className="font-mono text-[11px] bg-blue-100/80 px-1 py-0.5 rounded">orders.view_all</code>), thermal billing, and order acceptance are authorized.
+            <p className="text-stone-600 text-xs mt-0.5">
+              Click any switch in the matrix table below to toggle capabilities ON or OFF for that role. Changes sync instantly across all active sessions, POS billing terminals, and Kitchen displays.
             </p>
           </div>
         </div>
@@ -154,17 +271,30 @@ export const AdminPermissionsPage: React.FC = () => {
       {/* Role Counts Summary Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {ROLES_LIST.map((r) => {
-          const perms = ROLE_PERMISSIONS_MAP[r.role] || [];
+          const perms = matrix[r.role] || [];
           const Icon = r.icon;
+          const count = perms.length;
+          const pct = Math.round((count / SYSTEM_PERMISSIONS.length) * 100);
+
           return (
-            <div key={r.role} className="bg-white p-3.5 rounded-2xl border border-stone-200 shadow-xs space-y-1">
+            <div key={r.role} className="bg-white p-3.5 rounded-2xl border border-stone-200 shadow-xs space-y-1 hover:border-gold-300 transition">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">{r.badge}</span>
                 <Icon className="w-4 h-4 text-stone-400" />
               </div>
               <div className="font-bold text-xs text-stone-800 truncate">{r.title}</div>
-              <div className="text-xl font-serif font-black text-stone-900">
-                {perms.length} <span className="text-[11px] font-sans font-normal text-stone-400">/ 27 keys</span>
+              <div className="flex items-baseline justify-between">
+                <div className="text-xl font-serif font-black text-stone-900">
+                  {count} <span className="text-[11px] font-sans font-normal text-stone-400">/ 27</span>
+                </div>
+                <span className="text-[11px] font-semibold text-stone-500">{pct}%</span>
+              </div>
+              {/* Mini progress track */}
+              <div className="w-full bg-stone-100 h-1.5 rounded-full overflow-hidden mt-1">
+                <div 
+                  className={`h-full ${r.toggleBg}`} 
+                  style={{ width: `${pct}%` }} 
+                />
               </div>
             </div>
           );
@@ -190,7 +320,7 @@ export const AdminPermissionsPage: React.FC = () => {
             onClick={() => setSelectedDomain('ALL')}
             className={`px-3 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition ${
               selectedDomain === 'ALL'
-                ? 'bg-temple-700 text-white'
+                ? 'bg-temple-700 text-white shadow-xs'
                 : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
             }`}
           >
@@ -202,7 +332,7 @@ export const AdminPermissionsPage: React.FC = () => {
               onClick={() => setSelectedDomain(d)}
               className={`px-3 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition ${
                 selectedDomain === d
-                  ? 'bg-temple-700 text-white'
+                  ? 'bg-temple-700 text-white shadow-xs'
                   : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
               }`}
             >
@@ -212,7 +342,7 @@ export const AdminPermissionsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* TAB 1: ROLE-PERMISSIONS MATRIX TABLE */}
+      {/* TAB 1: INTERACTIVE ROLE-PERMISSIONS MATRIX TABLE */}
       {activeTab === 'MATRIX' && (
         <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
@@ -221,13 +351,21 @@ export const AdminPermissionsPage: React.FC = () => {
                 <tr>
                   <th className="p-4 min-w-[240px]">Permission Name & Key</th>
                   <th className="p-4">Domain</th>
-                  <th className="p-4 text-center">Super Admin</th>
-                  <th className="p-4 text-center">Admin (Manager)</th>
-                  <th className="p-4 text-center bg-blue-50/50 text-blue-900 border-x border-blue-100">
-                    Counter Staff
-                  </th>
-                  <th className="p-4 text-center">Kitchen Chef</th>
-                  <th className="p-4 text-center">Customer</th>
+                  {ROLES_LIST.map((r) => (
+                    <th 
+                      key={r.role} 
+                      className={`p-4 text-center min-w-[130px] ${
+                        r.role === 'STAFF' ? 'bg-blue-50/60 text-blue-900 border-x border-blue-100' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span>{r.title}</span>
+                      </div>
+                      <div className="text-[10px] font-normal normal-case text-stone-400 mt-0.5">
+                        {(matrix[r.role] || []).length} active
+                      </div>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
@@ -239,12 +377,6 @@ export const AdminPermissionsPage: React.FC = () => {
                   </tr>
                 ) : (
                   filteredPermissions.map((p) => {
-                    const hasSuper = ROLE_PERMISSIONS_MAP.SUPER_ADMIN.includes(p.key);
-                    const hasAdmin = ROLE_PERMISSIONS_MAP.ADMIN.includes(p.key);
-                    const hasStaff = ROLE_PERMISSIONS_MAP.STAFF.includes(p.key);
-                    const hasKitchen = ROLE_PERMISSIONS_MAP.KITCHEN_STAFF.includes(p.key);
-                    const hasCustomer = ROLE_PERMISSIONS_MAP.CUSTOMER.includes(p.key);
-
                     const isOverviewRow = p.key === 'dashboard.view';
 
                     return (
@@ -272,62 +404,50 @@ export const AdminPermissionsPage: React.FC = () => {
                           </span>
                         </td>
 
-                        {/* Super Admin */}
-                        <td className="p-4 text-center">
-                          {hasSuper ? (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-700">
-                              <Check className="w-3.5 h-3.5 font-bold" />
-                            </span>
-                          ) : (
-                            <span className="text-stone-300">—</span>
-                          )}
-                        </td>
+                        {/* Roles with Interactive Switches */}
+                        {ROLES_LIST.map((r) => {
+                          const isGranted = (matrix[r.role] || []).includes(p.key);
+                          const isStaffColumn = r.role === 'STAFF';
 
-                        {/* Admin */}
-                        <td className="p-4 text-center">
-                          {hasAdmin ? (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gold-100 text-gold-800">
-                              <Check className="w-3.5 h-3.5 font-bold" />
-                            </span>
-                          ) : (
-                            <span className="text-stone-300">—</span>
-                          )}
-                        </td>
+                          return (
+                            <td 
+                              key={r.role} 
+                              className={`p-4 text-center ${
+                                isStaffColumn ? 'bg-blue-50/20 border-x border-blue-100' : ''
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleToggle(r.role, p.key, !isGranted)}
+                                className={`group relative inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-xs select-none active:scale-95 cursor-pointer ${
+                                  isGranted
+                                    ? r.activeBg
+                                    : 'bg-stone-50 text-stone-400 border-stone-200 hover:bg-stone-100 hover:text-stone-600'
+                                }`}
+                                title={`Click to ${isGranted ? 'disable' : 'enable'} "${p.name}" for ${r.title}`}
+                              >
+                                {/* Animated switch knob */}
+                                <span className={`w-7 h-4 rounded-full flex items-center p-0.5 transition-colors ${
+                                  isGranted ? r.toggleBg : 'bg-stone-300'
+                                }`}>
+                                  <span className={`w-3 h-3 rounded-full bg-white shadow-xs transform transition-transform flex items-center justify-center ${
+                                    isGranted ? 'translate-x-3' : 'translate-x-0'
+                                  }`}>
+                                    {isGranted ? (
+                                      <Check className="w-2 h-2 text-stone-900" />
+                                    ) : (
+                                      <Minus className="w-2 h-2 text-stone-400" />
+                                    )}
+                                  </span>
+                                </span>
 
-                        {/* Counter Staff (Highlighted column) */}
-                        <td className="p-4 text-center bg-blue-50/30 border-x border-blue-100">
-                          {hasStaff ? (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700">
-                              <Check className="w-3.5 h-3.5 font-bold" />
-                            </span>
-                          ) : (
-                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold text-red-600 bg-red-50 border border-red-200">
-                              Restricted
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Kitchen Chef */}
-                        <td className="p-4 text-center">
-                          {hasKitchen ? (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-800">
-                              <Check className="w-3.5 h-3.5 font-bold" />
-                            </span>
-                          ) : (
-                            <span className="text-stone-300">—</span>
-                          )}
-                        </td>
-
-                        {/* Customer */}
-                        <td className="p-4 text-center">
-                          {hasCustomer ? (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-800">
-                              <Check className="w-3.5 h-3.5 font-bold" />
-                            </span>
-                          ) : (
-                            <span className="text-stone-300">—</span>
-                          )}
-                        </td>
+                                <span className="text-[11px]">
+                                  {isGranted ? 'Enabled' : 'Disabled'}
+                                </span>
+                              </button>
+                            </td>
+                          );
+                        })}
                       </tr>
                     );
                   })
@@ -342,8 +462,6 @@ export const AdminPermissionsPage: React.FC = () => {
       {activeTab === 'DIRECTORY' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredPermissions.map((p) => {
-            const rolesHolding = ROLES_LIST.filter(r => ROLE_PERMISSIONS_MAP[r.role].includes(p.key));
-
             return (
               <div 
                 key={p.key} 
@@ -368,23 +486,77 @@ export const AdminPermissionsPage: React.FC = () => {
                 </p>
 
                 <div className="pt-2 border-t border-stone-100">
-                  <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1.5">
-                    Authorized Roles:
+                  <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">
+                    Role Entitlements (Click chip to toggle privilege):
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {rolesHolding.map((r) => (
-                      <span
-                        key={r.role}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${r.color}`}
-                      >
-                        <span>{r.title}</span>
-                      </span>
-                    ))}
+                  <div className="flex flex-wrap gap-2">
+                    {ROLES_LIST.map((r) => {
+                      const isGranted = (matrix[r.role] || []).includes(p.key);
+
+                      return (
+                        <button
+                          key={r.role}
+                          type="button"
+                          onClick={() => handleToggle(r.role, p.key, !isGranted)}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer active:scale-95 ${
+                            isGranted
+                              ? r.activeBg
+                              : 'bg-stone-50 text-stone-400 border-dashed border-stone-300 hover:bg-stone-100 hover:text-stone-700'
+                          }`}
+                          title={`Click to ${isGranted ? 'disable' : 'enable'} for ${r.title}`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${isGranted ? r.toggleBg : 'bg-stone-300'}`} />
+                          <span>{r.title}</span>
+                          {isGranted ? (
+                            <Check className="w-3 h-3 text-current ml-0.5" />
+                          ) : (
+                            <span className="text-[10px] font-normal text-stone-400 ml-0.5">Off</span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Reset Defaults Confirmation Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-stone-200">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center border border-amber-300">
+              <RotateCcw className="w-6 h-6 text-amber-700" />
+            </div>
+
+            <div>
+              <h3 className="font-serif font-black text-xl text-stone-900">
+                Reset Privilege Matrix to Factory Defaults?
+              </h3>
+              <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                This action will revert all 5 roles to their original baseline permissions. Custom privilege toggles will be overwritten, and user sessions will sync automatically.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-stone-100">
+              <button
+                type="button"
+                onClick={() => setShowResetModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-100 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleResetToDefault}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-temple-700 hover:bg-temple-800 text-white shadow-xs transition active:scale-95"
+              >
+                Yes, Reset Defaults
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

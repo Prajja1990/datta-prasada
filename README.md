@@ -154,21 +154,52 @@ The output will be placed in the `dist/` directory, ready to deploy to Vercel, N
 
 ## 6. Supabase Database Migration
 
-The complete PostgreSQL migration script with RLS policies, tables, constraints, seed categories, Sakleshpur menu items, and atomic stored procedures is located at:
+The consolidated PostgreSQL setup is located at:
 
 ```
-supabase/migrations/20261112000000_init_datta_prasada.sql
+supabase/migrations/20261212000000_complete_setup.sql
 ```
 
 To deploy to your Supabase project:
 1. Open the [Supabase Dashboard](https://supabase.com/dashboard).
 2. Go to **SQL Editor**.
-3. Paste the contents of `supabase/migrations/20261112000000_init_datta_prasada.sql` and run.
-4. Copy your `Project URL` and `Anon Key` into your `.env` file:
+3. Run `supabase/migrations/20261212000000_complete_setup.sql` in SQL Editor. It contains the complete schema, seeds, Auth/profile synchronization, legacy login bridge, order persistence, sales analytics, restaurant settings, and configurable home content.
+4. Deploy both Edge Functions from the repository root with the Supabase CLI:
+   ```bash
+   supabase functions deploy user-admin
+   supabase functions deploy legacy-login
+   ```
+   Supabase provides the service-role secret to the function runtime. `legacy-login` checks the existing `user_accounts` bcrypt hash server-side, creates or syncs the Supabase Auth identity after valid credentials, and maps the account's roles. The browser then signs in through Supabase Auth normally. The function checks permissions before account-management changes.
+5. Copy your `Project URL` and `Anon Key` into your `.env` file:
    ```env
    VITE_SUPABASE_URL=https://your-project.supabase.co
    VITE_SUPABASE_ANON_KEY=your-anon-key-here
    ```
+
+The app uses Supabase Auth as the session source for protected database operations. Existing legacy `user_accounts` credentials are verified only inside the `legacy-login` Edge Function; on first successful login, that function provisions the corresponding Auth user and maps `user_profiles` and `user_roles`. This preserves existing bcrypt credentials while producing a normal Supabase Auth session. New accounts created from **Staff & Role Administration** use `user-admin` and Supabase Auth directly.
+
+Checkout creates orders with the database RPC `create_order_with_token`. It writes the order and item snapshots in one database transaction, assigns the daily token on the server, and calculates prices from current available menu rows. The confirmation page looks up the saved order by its tracking token. Staff and kitchen screens read order rows from Supabase and save status/payment changes through permission-checked functions.
+
+To check the live data after setup, run:
+```sql
+SELECT (SELECT count(*) FROM auth.users) AS auth_users,
+       (SELECT count(*) FROM public.user_profiles) AS profiles,
+       (SELECT count(*) FROM public.user_roles) AS role_assignments;
+
+SELECT p.id, p.email, p.full_name, p.is_active, array_agg(r.name ORDER BY r.name) AS roles
+FROM public.user_profiles p
+LEFT JOIN public.user_roles ur ON ur.user_id = p.id
+LEFT JOIN public.roles r ON r.id = ur.role_id
+GROUP BY p.id, p.email, p.full_name, p.is_active
+ORDER BY p.email;
+
+SELECT id, token_number, order_status, payment_status, total_amount, created_at
+FROM public.orders
+ORDER BY created_at DESC
+LIMIT 25;
+```
+
+If `auth_users` is zero, the profile and role tables should also be empty until the first user is created in Supabase Auth. If Auth users already exist, applying the new backfill migration fills the profile and default-role rows. Do not restore public table access to make account creation work.
 
 ---
 
@@ -176,3 +207,5 @@ To deploy to your Supabase project:
 
 Developed with traditional craftsmanship for **Datta Prasada**, Balagere Main Road, Bangalore.  
 *॥ ಶ್ರೀ ಗುರುದೇವ ದತ್ತ ॥*
+
+The migration folder contains one consolidated setup file. For an existing project managed with Supabase CLI migrations, reconcile its recorded migration versions before a CLI push; consolidation does not update the hosted migration ledger. SQL Editor execution does not require a CLI history repair.

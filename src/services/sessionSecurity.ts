@@ -172,9 +172,9 @@ class SessionSecurityService {
     const sessionId = `sess_${now}_${Math.random().toString(36).substring(2, 10)}`;
     const fingerprint = this.getClientFingerprint();
 
-    // Re-verify permissions based on role hierarchy to prevent client spoofing
+    // Re-verify permissions dynamically based on role matrix
     const primaryRole = user.roles[0];
-    const authoritativePermissions = ROLE_PERMISSIONS_MAP[primaryRole] || [];
+    const authoritativePermissions = store.getRolePermissions(primaryRole);
 
     const signature = this.computeSignature({
       sessionId,
@@ -205,6 +205,28 @@ class SessionSecurityService {
     this.broadcastSessionEvent('SESSION_ESTABLISHED', { userId: user.id, sessionId });
 
     return session;
+  }
+
+  public refreshCurrentSessionPermissions(): void {
+    if (typeof window === 'undefined') return;
+    const raw = localStorage.getItem(this.sessionKey);
+    if (!raw) return;
+    try {
+      const session: SecureSessionPayload = JSON.parse(raw);
+      const primaryRole = session.roles[0];
+      const authoritativePermissions = store.getRolePermissions(primaryRole);
+      session.permissions = authoritativePermissions;
+      session.signature = this.computeSignature({
+        sessionId: session.sessionId,
+        userId: session.userId,
+        email: session.email,
+        roles: session.roles,
+        fingerprint: session.fingerprint,
+        createdAt: session.createdAt,
+      });
+      localStorage.setItem(this.sessionKey, JSON.stringify(session));
+      this.broadcastSessionEvent('SESSION_ESTABLISHED', { userId: session.userId, sessionId: session.sessionId });
+    } catch {}
   }
 
   // --------------------------------------------------------------------------

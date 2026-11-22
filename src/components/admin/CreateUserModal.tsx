@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { store } from '../../services/store';
 import { ROLE_PERMISSIONS_MAP } from '../../services/auth';
+import { userAdmin } from '../../services/userAdmin';
+import { isSupabaseConfigured } from '../../lib/supabase';
 import { UserRoleType, UserAccount } from '../../types';
 import { 
   UserPlus, 
@@ -120,7 +122,7 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
@@ -136,8 +138,8 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({
       return;
     }
 
-    if (!password || password.length < 6) {
-      setError('Password must be at least 6 characters long.');
+    if (!password || password.length < 8) {
+      setError('Password must be at least 8 characters long.');
       return;
     }
 
@@ -148,29 +150,17 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      const res = store.createUser(
-        {
-          fullName: fullName.trim(),
-          email: cleanEmail,
-          mobile: mobile.trim() || undefined,
-          role: selectedRole,
-          password,
-          isActive,
-        },
-        {
-          name: currentUser?.fullName || 'Super Admin',
-          role: currentUser?.roles[0] || 'SUPER_ADMIN',
-        }
-      );
+      const created = isSupabaseConfigured
+        ? await userAdmin.create({ fullName: fullName.trim(), email: cleanEmail, mobile: mobile.trim() || undefined, role: selectedRole, password, isActive })
+        : (() => {
+            const result = store.createUser({ fullName: fullName.trim(), email: cleanEmail, mobile: mobile.trim() || undefined, role: selectedRole, password, isActive }, { name: currentUser?.fullName || 'Super Admin', role: currentUser?.roles[0] || 'SUPER_ADMIN' });
+            if (!result.success || !result.user) throw new Error(result.error || 'Failed to create user account.');
+            return result.user;
+          })();
 
-      if (!res.success || !res.user) {
-        setError(res.error || 'Failed to create user account.');
-        return;
-      }
-
-      setSuccess(`Account for ${res.user.fullName} successfully created with role ${selectedRole}!`);
+      setSuccess(`Account for ${created.fullName} successfully created with role ${selectedRole}!`);
       setTimeout(() => {
-        onSuccess?.(res.user!);
+        onSuccess?.(created);
         handleClose();
       }, 1500);
     } catch (err: any) {

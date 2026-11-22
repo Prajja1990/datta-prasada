@@ -28,28 +28,33 @@ export const KitchenDisplayPage: React.FC = () => {
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
-  const loadOrders = () => {
+  const loadOrders = async () => {
     // Only display active kitchen orders (ACCEPTED, PREPARING, READY, and PLACED)
-    const all = store.getOrders();
-    const active = all.filter(o => ['PLACED', 'ACCEPTED', 'PREPARING', 'READY'].includes(o.orderStatus));
-    setOrders(active);
+    try {
+      const all = await store.getDatabaseOrders();
+      setOrders(all.filter(o => ['PLACED', 'ACCEPTED', 'PREPARING', 'READY'].includes(o.orderStatus)));
+    } catch (error) {
+      console.error('Kitchen orders load failed:', error);
+    }
   };
 
   useEffect(() => {
-    loadOrders();
+    void loadOrders();
     const unsub = store.subscribe((eventType) => {
-      loadOrders();
+      void loadOrders();
     });
-    return unsub;
+    const timer = window.setInterval(() => void loadOrders(), 5000);
+    return () => { unsub(); window.clearInterval(timer); };
   }, []);
 
-  const handleAdvanceStatus = (orderId: string, nextStatus: OrderStatus) => {
+  const handleAdvanceStatus = async (orderId: string, nextStatus: OrderStatus) => {
     const actorName = user?.fullName || 'Kitchen Chef';
     const actorRole = user?.roles[0] || 'KITCHEN_STAFF';
-    const res = store.updateOrderStatus(orderId, nextStatus, actorName, actorRole);
+    const res = await store.updateDatabaseOrderStatus(orderId, nextStatus, actorName, actorRole);
     if (!res.success && res.error) {
       alert(res.error);
     }
+    void loadOrders();
   };
 
   const getElapsedMinutes = (createdAt: string) => {

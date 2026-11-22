@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { store } from '../../services/store';
+import { isSupabaseConfigured } from '../../lib/supabase';
 import { UserRoleType } from '../../types';
 import { 
   ShieldCheck, 
@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 
 export const StaffLoginPage: React.FC = () => {
-  const { loginAs, loginWithCredentials, isAuthenticated, user, securityNotice } = useAuth();
+  const { loginAs, loginWithCredentials, user, securityNotice } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -51,18 +51,20 @@ export const StaffLoginPage: React.FC = () => {
       setError('Please enter your email or staff ID');
       return;
     }
+    if (!password) {
+      setError('Please enter your password.');
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
     try {
       const res = await loginWithCredentials(email, password);
       if (res.success) {
-        const storedUser = store.getUserByEmail(email);
-        const role = storedUser?.roles[0];
-        const emailLower = email.toLowerCase();
+        const role = res.role;
 
-        if (role === 'SUPER_ADMIN' || role === 'ADMIN' || emailLower.includes('admin') || emailLower.includes('manager') || emailLower.includes('super')) {
+        if (role === 'SUPER_ADMIN' || role === 'ADMIN') {
           navigate('/admin/dashboard');
-        } else if (role === 'KITCHEN_STAFF' || emailLower.includes('kitchen') || emailLower.includes('chef')) {
+        } else if (role === 'KITCHEN_STAFF') {
           navigate('/kitchen');
         } else {
           navigate(from);
@@ -84,7 +86,7 @@ export const StaffLoginPage: React.FC = () => {
             <img
               src="/logo.jpg"
               alt="Datta Prasada"
-              className="w-full h-full object-cover rounded-xl"
+              className="w-full h-full object-contain object-center"
             />
           </div>
           <h1 className="font-serif font-black text-3xl text-temple-900">
@@ -112,7 +114,7 @@ export const StaffLoginPage: React.FC = () => {
           </div>
         )}
 
-        {/* 1-Click Fast Role Picker for Testing */}
+        {!isSupabaseConfigured && <>{/* 1-Click Fast Role Picker for local demo mode */}
         <div className="bg-white rounded-3xl border border-gold-200 shadow-traditional p-6 space-y-4">
           <div className="flex items-center justify-between border-b border-stone-100 pb-3">
             <span className="text-xs font-bold text-stone-700 uppercase tracking-wider">
@@ -193,6 +195,7 @@ export const StaffLoginPage: React.FC = () => {
             </button>
           </div>
         </div>
+        </>}
 
         {/* Regular Credential Form */}
         <div className="bg-white rounded-3xl border border-stone-200 shadow-sm p-6 space-y-4">
@@ -237,7 +240,7 @@ export const StaffLoginPage: React.FC = () => {
             </button>
           </form>
 
-          {/* Reference demo credentials */}
+          {!isSupabaseConfigured && <>{/* Reference demo credentials */}
           <div className="pt-3 border-t border-stone-100 text-[11px] text-stone-500 space-y-1.5">
             <div className="font-bold text-stone-700 flex items-center gap-1">
               <Key className="w-3 h-3 text-gold-600" />
@@ -250,6 +253,8 @@ export const StaffLoginPage: React.FC = () => {
               <div>Kitchen: <span className="text-amber-700 font-bold">Kitchen@123</span></div>
             </div>
           </div>
+        </>}
+
         </div>
 
         {/* Back link */}
@@ -262,3 +267,9 @@ export const StaffLoginPage: React.FC = () => {
     </div>
   );
 };
+
+
+
+
+
+

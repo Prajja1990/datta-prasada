@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCart } from '../../context/CartContext';
-import { store } from '../../services/store';
+import { usePublicRestaurantProfile } from '../../services/publicRestaurantProfile';
+import { loadHomeMenu } from '../../services/restaurantDatabase';
+import { Category, MenuItem } from '../../types';
 import { 
   ArrowRight, 
   Sparkles, 
@@ -18,16 +20,37 @@ import {
 } from 'lucide-react';
 
 export const HomePage: React.FC = () => {
-  const { language, t } = useLanguage();
-  const { addToCart, items: cartItems } = useCart();
-  const categories = store.getCategories().filter(c => c.active);
-  const featuredItems = store.getMenuItems().filter(i => i.featured && i.available);
-  const todaysSpecial = featuredItems[0] || store.getMenuItems()[0];
+  const { language } = useLanguage();
+  const { profile, error: profileError } = usePublicRestaurantProfile();
+  const { addToCart } = useCart();
+  const copy = (key: string) => profile?.home_content[language === 'kn' ? key + '_kn' : key] ?? profile?.home_content[key] ?? '';
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuError, setMenuError] = useState<string | null>(null);
 
-  const isItemInCart = (id: string) => cartItems.some(ci => ci.menuItem.id === id);
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const result = await loadHomeMenu();
+        if (active) { setCategories(result.categories); setMenuItems(result.menuItems); setMenuError(null); }
+      } catch (error: any) { if (active) setMenuError(error.message || 'Unable to load menu.'); }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  const featuredItems = menuItems.filter(i => i.featured && i.available);
+  const selectedId = profile?.home_content.special_menu_item_id;
+  const todaysSpecial = selectedId
+    ? menuItems.find(item => item.id === selectedId && item.available)
+    : featuredItems[0] || menuItems.find(item => item.available);
 
   return (
     <div className="space-y-16 pb-20">
+      {profileError && <p role="status" className="px-4 text-stone-600">{profileError}</p>}
+      {menuError && <p role="alert" className="px-4 text-red-700">{menuError}</p>}
       {/* Hero Section */}
       <section className="relative overflow-hidden bg-gradient-to-b from-cream-100 via-ivory to-cream-50 pt-8 pb-16 sm:pb-24 border-b border-gold-200/50">
         {/* Subtle decorative background ring */}
@@ -41,28 +64,28 @@ export const HomePage: React.FC = () => {
               <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4">
                 <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white overflow-hidden p-1 border-2 border-gold-400 shadow-traditional shrink-0">
                   <img
-                    src="/logo.jpg"
-                    alt="Datta Prasada"
-                    className="w-full h-full object-cover rounded-xl"
+                    src={profile?.home_content.logo_url || undefined}
+                    alt={profile?.restaurant_name || 'Restaurant logo'}
+                    className="w-full h-full object-contain object-center"
                   />
                 </div>
                 <div>
                   <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-gold-100/80 border border-gold-300 text-gold-900 text-xs font-bold shadow-xs">
                     <Sparkles className="w-3.5 h-3.5 text-gold-600" />
-                    <span>{t.home.welcome}</span>
+                    <span>{copy('home_welcome')}</span>
                   </div>
                   <div className="text-xs text-gold-700 font-bold mt-1 tracking-wider uppercase">
-                    Authentic Sakleshpur Taste • Balagere
+                    {language === 'kn' ? profile?.tagline_kn : profile?.tagline}
                   </div>
                 </div>
               </div>
 
               <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl font-black text-temple-900 tracking-tight leading-[1.15]">
-                {t.home.heroTitle}
+                {copy('hero_heading')}
               </h1>
 
               <p className="text-stone-600 text-base sm:text-lg max-w-2xl leading-relaxed">
-                {t.home.heroSubtitle}
+                {copy('hero_description')}
               </p>
 
               {/* Action Buttons */}
@@ -71,7 +94,7 @@ export const HomePage: React.FC = () => {
                   to="/menu"
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-8 py-4 rounded-xl bg-gradient-to-r from-temple-700 to-temple-800 hover:from-temple-800 hover:to-temple-900 text-white font-serif font-bold text-lg shadow-traditional hover:shadow-gold transition-all duration-200 active:scale-95"
                 >
-                  <span>{t.home.orderNow}</span>
+                  <span>{copy('home_orderNow')}</span>
                   <ArrowRight className="w-5 h-5 text-gold-400" />
                 </Link>
 
@@ -80,23 +103,23 @@ export const HomePage: React.FC = () => {
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-4 rounded-xl border border-gold-400 bg-white/80 hover:bg-gold-50 text-temple-900 font-bold text-base shadow-xs transition"
                 >
                   <Clock className="w-4 h-4 text-gold-600" />
-                  <span>{t.nav.track}</span>
+                  <span>{copy('nav_track')}</span>
                 </Link>
               </div>
 
               {/* Key Trust Badges */}
               <div className="grid grid-cols-3 gap-3 pt-6 border-t border-gold-200/60 max-w-lg mx-auto lg:mx-0">
                 <div className="text-center lg:text-left">
-                  <div className="text-temple-800 font-bold text-sm">100% Pure Veg</div>
-                  <div className="text-stone-500 text-xs">Traditional Kitchen</div>
+                  <div className="text-temple-800 font-bold text-sm">{copy('badge_1_title')}</div>
+                  <div className="text-stone-500 text-xs">{copy('badge_1_description')}</div>
                 </div>
                 <div className="text-center lg:text-left border-x border-stone-200 px-2">
-                  <div className="text-temple-800 font-bold text-sm">Pure Desi Ghee</div>
-                  <div className="text-stone-500 text-xs">Authentic Recipe</div>
+                  <div className="text-temple-800 font-bold text-sm">{copy('badge_2_title')}</div>
+                  <div className="text-stone-500 text-xs">{copy('badge_2_description')}</div>
                 </div>
                 <div className="text-center lg:text-left">
-                  <div className="text-temple-800 font-bold text-sm">Instant Token</div>
-                  <div className="text-stone-500 text-xs">Live Preparation</div>
+                  <div className="text-temple-800 font-bold text-sm">{copy('badge_3_title')}</div>
+                  <div className="text-stone-500 text-xs">{copy('badge_3_description')}</div>
                 </div>
               </div>
             </div>
@@ -106,8 +129,8 @@ export const HomePage: React.FC = () => {
               <div className="relative w-full max-w-md">
                 <div className="relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white aspect-square group">
                   <img
-                    src="https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=1000&auto=format&fit=crop&q=80"
-                    alt="Authentic Thatte Idli"
+                    src={profile?.home_content.hero_image_url || undefined}
+                    alt={copy('hero_image_alt')}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
@@ -115,27 +138,26 @@ export const HomePage: React.FC = () => {
                   {/* Floating Tag */}
                   <div className="absolute top-4 left-4 bg-temple-900/90 backdrop-blur-md text-gold-300 border border-gold-400 px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-gold-400" />
-                    <span>Sakleshpur Heritage Recipe</span>
+                    <span>{copy('hero_badge')}</span>
                   </div>
 
                   {/* Bottom Dish Information */}
                   <div className="absolute bottom-6 left-6 right-6 text-white space-y-1">
                     <div className="font-serif font-bold text-2xl text-gold-300">
-                      {language === 'kn' ? 'ಬಿಸಿ ಬಿಸಿ ತಟ್ಟೆ ಇಡ್ಲಿ' : 'Steaming Thatte Idli'}
+                      {copy('hero_dish_title')}
                     </div>
                     <div className="text-xs text-stone-200 line-clamp-2">
-                      {language === 'kn'
-                        ? 'ತಾಜಾ ಬಿಳಿ ಬೆಣ್ಣೆ ಮತ್ತು ಸಕಲೇಶಪುರದ ಕೆಂಪು ಚಟ್ನಿ ಜೊತೆಗೆ'
-                        : 'Served with fresh farm butter, spicy red chutney, and fragrant sambar.'}
+                      {copy('hero_dish_description')}
                     </div>
                     <div className="pt-2 flex items-center justify-between">
-                      <span className="font-serif font-black text-xl text-white">₹40</span>
+                      <span className="font-serif font-black text-xl text-white">{todaysSpecial ? `₹${todaysSpecial.price}` : ''}</span>
                       <button
-                        onClick={() => addToCart(store.getMenuItemById('item-thatte-idli') || todaysSpecial)}
+                        disabled={!todaysSpecial}
+                        onClick={() => { if (todaysSpecial) addToCart(todaysSpecial); }}
                         className="px-4 py-1.5 bg-gold-500 hover:bg-gold-600 text-temple-950 rounded-full font-bold text-xs flex items-center gap-1 shadow-sm transition active:scale-95"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>{t.menu.addToCart}</span>
+                        <span>{copy('menu_addToCart')}</span>
                       </button>
                     </div>
                   </div>
@@ -161,7 +183,7 @@ export const HomePage: React.FC = () => {
                 </div>
                 <div>
                   <div className="inline-block px-2.5 py-0.5 rounded-full bg-gold-100 text-gold-900 text-[10px] font-black uppercase tracking-wider mb-1">
-                    {t.home.todaysSpecial}
+                    {copy('home_todaysSpecial')}
                   </div>
                   <h3 className="font-serif font-bold text-2xl text-stone-900">
                     {language === 'kn' ? todaysSpecial.nameKn : todaysSpecial.name}
@@ -174,7 +196,7 @@ export const HomePage: React.FC = () => {
 
               <div className="flex items-center gap-4 shrink-0 w-full md:w-auto justify-between md:justify-end">
                 <div className="text-right">
-                  <span className="text-xs text-stone-500 block">Special Price</span>
+                  <span className="text-xs text-stone-500 block">{copy('special_price_label')}</span>
                   <span className="font-serif font-black text-2xl text-temple-800">
                     ₹{todaysSpecial.price}
                   </span>
@@ -184,7 +206,7 @@ export const HomePage: React.FC = () => {
                   className="px-6 py-3 bg-temple-700 hover:bg-temple-800 text-white rounded-xl font-bold text-sm flex items-center gap-2 shadow-sm transition active:scale-95"
                 >
                   <Plus className="w-4 h-4 text-gold-400" />
-                  <span>{t.menu.addToCart}</span>
+                  <span>{copy('menu_addToCart')}</span>
                 </button>
               </div>
             </div>
@@ -197,17 +219,17 @@ export const HomePage: React.FC = () => {
         <div className="flex items-end justify-between border-b border-gold-200/60 pb-4">
           <div>
             <h2 className="font-serif font-bold text-3xl text-temple-900">
-              {t.home.categoriesTitle}
+              {copy('home_categoriesTitle')}
             </h2>
             <p className="text-stone-500 text-sm mt-1">
-              {language === 'kn' ? 'ನಮ್ಮ ಸಾಂಪ್ರದಾಯಿಕ ಉಪಹಾರ ವಿಭಾಗಗಳು' : 'Explore authentic preparations by category'}
+              {copy('categories_description')}
             </p>
           </div>
           <Link
             to="/menu"
             className="text-gold-700 hover:text-gold-800 font-bold text-sm inline-flex items-center gap-1"
           >
-            <span>{t.home.viewMenu}</span>
+            <span>{copy('home_viewMenu')}</span>
             <ArrowRight className="w-4 h-4" />
           </Link>
         </div>
@@ -240,17 +262,17 @@ export const HomePage: React.FC = () => {
         <div className="flex items-end justify-between border-b border-gold-200/60 pb-4">
           <div>
             <h2 className="font-serif font-bold text-3xl text-temple-900">
-              {t.home.featuredTitle}
+              {copy('home_featuredTitle')}
             </h2>
             <p className="text-stone-500 text-sm mt-1">
-              {language === 'kn' ? 'ಗ್ರಾಹಕರ ಅಚ್ಚುಮೆಚ್ಚಿನ ತಿನಿಸುಗಳು' : 'Most ordered South Indian breakfast specialties'}
+              {copy('featured_description')}
             </p>
           </div>
           <Link
             to="/menu"
             className="text-gold-700 hover:text-gold-800 font-bold text-sm inline-flex items-center gap-1"
           >
-            <span>{t.menu.subtitle}</span>
+            <span>{copy('menu_subtitle')}</span>
             <ArrowRight className="w-4 h-4" />
           </Link>
         </div>
@@ -271,13 +293,13 @@ export const HomePage: React.FC = () => {
                 {/* Pure Veg Badge */}
                 <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-md flex items-center gap-1 border border-green-600">
                   <div className="w-2.5 h-2.5 rounded-full bg-green-600" />
-                  <span className="text-[10px] font-bold text-green-800 uppercase">Pure Veg</span>
+                  <span className="text-[10px] font-bold text-green-800 uppercase">{copy('veg_label')}</span>
                 </div>
 
                 {/* Prep time */}
                 <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm text-white px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
                   <Clock className="w-3 h-3 text-gold-300" />
-                  <span>{item.preparationTimeMinutes} {t.menu.prepTime}</span>
+                  <span>{item.preparationTimeMinutes} {copy('menu_prepTime')}</span>
                 </div>
               </div>
 
@@ -304,7 +326,7 @@ export const HomePage: React.FC = () => {
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gold-500 hover:bg-gold-600 text-temple-950 font-bold text-xs shadow-xs transition active:scale-95"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>{t.menu.addToCart}</span>
+                    <span>{copy('menu_addToCart')}</span>
                   </button>
                 </div>
               </div>
@@ -320,42 +342,42 @@ export const HomePage: React.FC = () => {
             <div className="space-y-4">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gold-500/20 border border-gold-400 text-gold-300 text-xs font-bold">
                 <Heart className="w-3.5 h-3.5 text-gold-400 fill-gold-400" />
-                <span>Sakleshpur Food Heritage</span>
+                <span>{copy('story_badge')}</span>
               </div>
               <h2 className="font-serif font-bold text-3xl sm:text-4xl text-gold-400">
-                {t.home.ourStoryTitle}
+                {copy('home_ourStoryTitle')}
               </h2>
               <p className="text-stone-300 text-sm sm:text-base leading-relaxed">
-                {t.home.ourStoryP1}
+                {copy('home_ourStoryP1')}
               </p>
               <p className="text-stone-300 text-sm sm:text-base leading-relaxed">
-                {t.home.ourStoryP2}
+                {copy('home_ourStoryP2')}
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white/5 border border-gold-500/30 rounded-2xl p-6 text-center space-y-2">
-                <div className="font-serif font-black text-3xl text-gold-400">0%</div>
+                <div className="font-serif font-black text-3xl text-gold-400">{copy('stat_1_value')}</div>
                 <div className="text-xs text-stone-300 font-semibold uppercase tracking-wider">
-                  Soda or Artificial Colors
+                  {copy('stat_1_label')}
                 </div>
               </div>
               <div className="bg-white/5 border border-gold-500/30 rounded-2xl p-6 text-center space-y-2">
-                <div className="font-serif font-black text-3xl text-gold-400">100%</div>
+                <div className="font-serif font-black text-3xl text-gold-400">{copy('stat_2_value')}</div>
                 <div className="text-xs text-stone-300 font-semibold uppercase tracking-wider">
-                  Stone Ground Batter
+                  {copy('stat_2_label')}
                 </div>
               </div>
               <div className="bg-white/5 border border-gold-500/30 rounded-2xl p-6 text-center space-y-2">
-                <div className="font-serif font-black text-3xl text-gold-400">Desi</div>
+                <div className="font-serif font-black text-3xl text-gold-400">{copy('stat_3_value')}</div>
                 <div className="text-xs text-stone-300 font-semibold uppercase tracking-wider">
-                  Pure Cow Butter & Ghee
+                  {copy('stat_3_label')}
                 </div>
               </div>
               <div className="bg-white/5 border border-gold-500/30 rounded-2xl p-6 text-center space-y-2">
-                <div className="font-serif font-black text-3xl text-gold-400">Degree</div>
+                <div className="font-serif font-black text-3xl text-gold-400">{copy('stat_4_value')}</div>
                 <div className="text-xs text-stone-300 font-semibold uppercase tracking-wider">
-                  Estate Filter Coffee
+                  {copy('stat_4_label')}
                 </div>
               </div>
             </div>
@@ -368,10 +390,10 @@ export const HomePage: React.FC = () => {
         <div className="bg-white rounded-3xl border border-gold-300/80 shadow-traditional p-8 sm:p-12">
           <div className="text-center max-w-2xl mx-auto space-y-3 mb-10">
             <h2 className="font-serif font-bold text-3xl text-temple-900">
-              {t.home.locationTitle}
+              {copy('home_locationTitle')}
             </h2>
             <p className="text-stone-600 text-sm">
-              Visit our Balagere outlet or place your order online for express counter pickup and dine-in.
+              {copy('location_description')}
             </p>
           </div>
 
@@ -381,9 +403,9 @@ export const HomePage: React.FC = () => {
                 <MapPin className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <h4 className="font-serif font-bold text-stone-900 text-base">{t.home.addressLabel}</h4>
+                <h4 className="font-serif font-bold text-stone-900 text-base">{copy('home_addressLabel')}</h4>
                 <p className="text-xs text-stone-600 leading-relaxed">
-                  Datta Prasada, Balagere Main Road, Near Panathur Bridge, Balagere, Bangalore - 560087
+                  {profile?.address}
                 </p>
               </div>
             </div>
@@ -393,10 +415,9 @@ export const HomePage: React.FC = () => {
                 <Clock className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <h4 className="font-serif font-bold text-stone-900 text-base">{t.home.hoursLabel}</h4>
+                <h4 className="font-serif font-bold text-stone-900 text-base">{copy('home_hoursLabel')}</h4>
                 <p className="text-xs text-stone-600 leading-relaxed">
-                  Open Everyday: 6:30 AM – 10:30 PM<br />
-                  Morning Tiffin & Evening Snacks
+                  {profile?.opening_hours}
                 </p>
               </div>
             </div>
@@ -406,10 +427,9 @@ export const HomePage: React.FC = () => {
                 <Phone className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <h4 className="font-serif font-bold text-stone-900 text-base">{t.home.phoneLabel}</h4>
+                <h4 className="font-serif font-bold text-stone-900 text-base">{copy('home_phoneLabel')}</h4>
                 <p className="text-xs text-stone-600 leading-relaxed">
-                  Counter Line: +91 98450 12345<br />
-                  Direct WhatsApp Token Support
+                  {profile?.phone && <a href={`tel:${profile.phone.replace(/[^+0-9]/g, '')}`}>{profile.phone}</a>}
                 </p>
               </div>
             </div>

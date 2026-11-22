@@ -11,6 +11,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   UserRoleType,
+  PermissionKey,
   UserAccount
 } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -282,6 +283,39 @@ const bc = typeof window !== 'undefined' && 'BroadcastChannel' in window
   ? new BroadcastChannel('datta_prasada_realtime')
   : null;
 
+function mapDatabaseOrder(row: any, items = row.order_items || row.items || []): Order {
+  return {
+    id: row.id,
+    tokenNumber: row.token_number,
+    tokenDate: row.token_date,
+    trackingToken: row.tracking_token,
+    customerId: row.customer_id || undefined,
+    customerName: row.customer_name,
+    customerMobile: row.customer_mobile,
+    orderType: row.order_type,
+    tableNumber: row.table_number || undefined,
+    subtotal: Number(row.subtotal),
+    taxAmount: Number(row.tax_amount),
+    totalAmount: Number(row.total_amount),
+    paymentMethod: row.payment_method,
+    paymentStatus: row.payment_status,
+    orderStatus: row.order_status,
+    notes: row.notes || undefined,
+    estimatedPrepTimeMinutes: row.estimated_prep_time_minutes || 10,
+    items: items.map((item: any) => ({
+      id: item.id,
+      menuItemId: item.menu_item_id || '',
+      name: item.item_name,
+      nameKn: item.item_name_kn || undefined,
+      quantity: item.quantity,
+      unitPrice: Number(item.unit_price),
+      totalPrice: Number(item.total_price),
+    })),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 class StoreService {
   private categoriesKey = 'dp_categories';
   private menuKey = 'dp_menu_items';
@@ -477,7 +511,8 @@ class StoreService {
     paymentStatus?: PaymentStatus;
     notes?: string;
     items: OrderItem[];
-  }): Order {
+  }): Promise<Order> {
+    if (isSupabaseConfigured && supabase) return this.createDatabaseOrder(params);
     const { tokenNumber, tokenDate } = this.getNextDailyToken();
     const trackingToken = this.generateTrackingToken();
 
@@ -535,7 +570,116 @@ class StoreService {
     });
 
     this.notifySubscribers('ORDER_CREATED', newOrder);
-    return newOrder;
+    return Promise.resolve(newOrder);
+  }
+
+  private async createDatabaseOrder(params: {
+    customerName: string;
+    customerMobile: string;
+    orderType: OrderType;
+    tableNumber?: string;
+    paymentMethod: PaymentMethod;
+    paymentStatus?: PaymentStatus;
+    notes?: string;
+    items: OrderItem[];
+  }): Promise<Order> {
+    const itemNames = [...new Set(params.items.map((item) => item.name))];
+    const { data: dbMenuItems, error: menuError } = await supabase
+      .from('menu_items')
+      .select('id, name, price, preparation_time_minutes, available')
+      .in('name', itemNames);
+    if (menuError) throw new Error(`Could not verify menu items: ${menuError.message}`);
+    const menuByName = new Map((dbMenuItems || []).map((item: any) => [String(item.name).trim().toLowerCase(), item]));
+    const rpcItems = params.items.map((item) => {
+      const dbItem = menuByName.get(item.name.trim().toLowerCase()) as any;
+      if (!dbItem || !dbItem.available) throw new Error(`${item.name} is no longer available. Refresh the menu and try again.`);
+      return { menu_item_id: dbItem.id, name: dbItem.name, quantity: item.quantity, price: Number(dbItem.price) };
+    });
+    const subtotal = rpcItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const taxAmount = Math.round(subtotal * 0.05 * 100) / 100;
+    const { data, error } = await supabase.rpc('create_order_with_token', {
+      p_customer_name: params.customerName.trim(),
+      p_customer_mobile: params.customerMobile.trim(),
+      p_order_type: params.orderType,
+      p_table_number: params.tableNumber?.trim() || null,
+      p_subtotal: subtotal,
+      p_tax_amount: taxAmount,
+      p_total_amount: subtotal + taxAmount,
+      p_payment_method: params.paymentMethod,
+      p_payment_status: params.paymentStatus || (params.paymentMethod === 'UPI' ? 'PAID' : 'PENDING'),
+      p_notes: params.notes?.trim() || null,
+      p_items: rpcItems,
+    });
+    if (error) throw new Error(`Order was not saved: ${error.message}`);
+    const order = await this.queryDatabaseOrderByTrackingToken(data.tracking_token);
+    if (!order) throw new Error('The order was submitted but could not be loaded for confirmation. Save tracking token: ' + data.tracking_token);
+    this.notifySubscribers('ORDER_CREATED', order);
+    return order;
+  }
+
+  public async getDatabaseOrders(): Promise<Order[]> {
+    if (!isSupabaseConfigured || !supabase) return this.getOrders();
+    const { data, error } = await supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false });
+    if (error) throw new Error(`Could not load orders: ${error.message}`);
+    return (data || []).map((row: any) => mapDatabaseOrder(row));
+  }
+
+  public async getDatabaseOrderById(id: string): Promise<Order | undefined> {
+    if (!isSupabaseConfigured || !supabase) return this.getOrderById(id);
+    const { data, error } = await supabase.from('orders').select('*, order_items(*)').eq('id', id).maybeSingle();
+    if (error) throw new Error(`Could not load order: ${error.message}`);
+    return data ? mapDatabaseOrder(data) : undefined;
+  }
+
+  public async getDatabaseOrderByTrackingToken(token: string): Promise<Order | undefined> {
+    if (!isSupabaseConfigured || !supabase) return this.getOrderByTrackingToken(token);
+    return this.queryDatabaseOrderByTrackingToken(token);
+  }
+
+  public async findDatabaseOrder(reference: string): Promise<Order | undefined> {
+    if (!isSupabaseConfigured || !supabase) {
+      return this.getOrderByTrackingToken(reference) || this.getOrderByTokenNumber(reference) || this.getOrderById(reference);
+    }
+    const byTrackingToken = await this.queryDatabaseOrderByTrackingToken(reference);
+    if (byTrackingToken) return byTrackingToken;
+    const staffOrders = await this.getDatabaseOrders();
+    const clean = reference.trim().toUpperCase();
+    return staffOrders.find((order) => order.tokenNumber.toUpperCase() === clean || order.id.toUpperCase() === clean);
+  }
+
+  private async queryDatabaseOrderByTrackingToken(token: string): Promise<Order | undefined> {
+    const { data, error } = await supabase.rpc('get_order_by_tracking_token', { p_tracking_token: token });
+    if (error) throw new Error(`Could not load tracked order: ${error.message}`);
+    if (!data?.order) return undefined;
+    return mapDatabaseOrder(data.order, data.items || []);
+  }
+
+  public async updateDatabaseOrderStatus(orderId: string, newStatus: OrderStatus, actorName: string, actorRole: UserRoleType, reason?: string) {
+    if (!isSupabaseConfigured || !supabase) return this.updateOrderStatus(orderId, newStatus, actorName, actorRole, reason);
+    const { data, error } = await supabase.rpc('advance_order_status', {
+      p_order_id: orderId,
+      p_new_status: newStatus,
+      p_actor_name: actorName,
+      p_reason: reason || null,
+    });
+    if (error) return { success: false, error: error.message };
+    if (!data) return { success: false, error: 'Order not found.' };
+    const updatedOrder = await this.getDatabaseOrderById(orderId);
+    if (updatedOrder) this.notifySubscribers('ORDER_UPDATED', updatedOrder);
+    return { success: true };
+  }
+
+  public async updateDatabasePaymentStatus(orderId: string, status: PaymentStatus, actorName: string, actorRole: UserRoleType) {
+    if (!isSupabaseConfigured || !supabase) return { success: this.updatePaymentStatus(orderId, status, actorName, actorRole) };
+    const { data, error } = await supabase.rpc('set_order_payment_status', {
+      p_order_id: orderId,
+      p_payment_status: status,
+      p_actor_name: actorName,
+    });
+    if (error) return { success: false, error: error.message };
+    const updatedOrder = await this.getDatabaseOrderById(orderId);
+    if (updatedOrder) this.notifySubscribers('ORDER_UPDATED', updatedOrder);
+    return { success: !!data, error: data ? undefined : 'Order not found.' };
   }
 
   // --------------------------------------------------------------------------
@@ -905,6 +1049,31 @@ class StoreService {
 
     this.notifySubscribers('USERS_UPDATED', users);
     return { success: true };
+  }
+
+  public getRolePermissionsMap(): Record<UserRoleType, PermissionKey[]> {
+    const stored = typeof window !== 'undefined' ? localStorage.getItem('dp_role_permissions') : null;
+    return stored ? JSON.parse(stored) : { ...ROLE_PERMISSIONS_MAP };
+  }
+
+  public getRolePermissions(role: UserRoleType): PermissionKey[] {
+    return this.getRolePermissionsMap()[role] || [];
+  }
+
+  public toggleRolePermission(role: UserRoleType, permission: PermissionKey, enabled: boolean, actor: { name: string; role: UserRoleType }) {
+    const map = this.getRolePermissionsMap();
+    const current = new Set(map[role] || []);
+    enabled ? current.add(permission) : current.delete(permission);
+    map[role] = [...current];
+    localStorage.setItem('dp_role_permissions', JSON.stringify(map));
+    this.notifySubscribers('ROLE_PERMISSIONS_UPDATED', { role, permission, enabled, actor });
+    return { success: true, error: undefined as string | undefined };
+  }
+
+  public resetRolePermissionsToDefault(_actor: { name: string; role: UserRoleType }) {
+    localStorage.setItem('dp_role_permissions', JSON.stringify(ROLE_PERMISSIONS_MAP));
+    this.notifySubscribers('ROLE_PERMISSIONS_UPDATED', null);
+    return { success: true, error: undefined as string | undefined };
   }
 }
 

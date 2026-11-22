@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { store } from '../../services/store';
-import { Order } from '../../types';
+import { loadSalesReport, SalesReport, SalesReportRange } from '../../services/restaurantDatabase';
 import { 
   BarChart3, 
   Download, 
@@ -13,65 +12,35 @@ import {
 } from 'lucide-react';
 
 export const AdminReportsPage: React.FC = () => {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [dateRange, setDateRange] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'ALL'>('TODAY');
-
-  const loadData = () => {
-    setOrders(store.getOrders());
-  };
+  const [report, setReport] = useState<SalesReport | null>(null);
+  const [dateRange, setDateRange] = useState<SalesReportRange>('TODAY');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadData();
-    const unsub = store.subscribe(() => loadData());
-    return unsub;
-  }, []);
+    let active = true;
+    let pending = false;
+    const load = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const data = await loadSalesReport(dateRange);
+        if (active) { setReport(data); setLoadError(null); }
+      } catch (error: any) {
+        if (active) { setLoadError(error.message || 'Unable to load database report.'); setReport(null); }
+      } finally { pending = false; if (active) setLoading(false); }
+    };
+    setLoading(true);
+    setReport(null);
+    void load();
+    const timer = window.setInterval(() => void load(), 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [dateRange]);
 
-  // Filter orders by date range
-  const now = new Date();
-  const filteredOrders = orders.filter((o) => {
-    const oDate = new Date(o.createdAt);
-    if (dateRange === 'TODAY') {
-      return oDate.toDateString() === now.toDateString();
-    }
-    if (dateRange === 'WEEK') {
-      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      return oDate >= weekAgo;
-    }
-    if (dateRange === 'MONTH') {
-      const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      return oDate >= monthAgo;
-    }
-    return true;
-  });
-
-  const totalRevenue = filteredOrders
-    .filter(o => o.paymentStatus === 'PAID')
-    .reduce((sum, o) => sum + o.totalAmount, 0);
-
-  const totalOrdersCount = filteredOrders.length;
-  const paidOrdersCount = filteredOrders.filter(o => o.paymentStatus === 'PAID').length;
-  const aov = paidOrdersCount > 0 ? totalRevenue / paidOrdersCount : 0;
-
-  const cashTotal = filteredOrders
-    .filter(o => o.paymentMethod === 'CASH' && o.paymentStatus === 'PAID')
-    .reduce((sum, o) => sum + o.totalAmount, 0);
-
-  const upiTotal = filteredOrders
-    .filter(o => o.paymentMethod === 'UPI' && o.paymentStatus === 'PAID')
-    .reduce((sum, o) => sum + o.totalAmount, 0);
-
-  // Item wise sales
-  const itemMap: Record<string, { name: string; quantity: number; revenue: number }> = {};
-  filteredOrders.forEach((o) => {
-    o.items.forEach((it) => {
-      if (!itemMap[it.name]) {
-        itemMap[it.name] = { name: it.name, quantity: 0, revenue: 0 };
-      }
-      itemMap[it.name].quantity += it.quantity;
-      itemMap[it.name].revenue += it.totalPrice;
-    });
-  });
-  const itemSales = Object.values(itemMap).sort((a, b) => b.revenue - a.revenue);
+  const {
+    totalRevenue = 0, totalOrdersCount = 0, paidOrdersCount = 0,
+    aov = 0, cashTotal = 0, upiTotal = 0, itemSales = [], orders: filteredOrders = [],
+  } = report || {};
 
   // CSV Export
   const exportCSV = () => {
@@ -104,6 +73,7 @@ export const AdminReportsPage: React.FC = () => {
 
   return (
     <div className="p-6 sm:p-8 space-y-8 max-w-7xl mx-auto pb-28">
+      {loadError && <p role="alert" className="p-4 bg-red-50 text-red-800 rounded-xl">{loadError}</p>}
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-stone-200 pb-4">
         <div>
@@ -133,6 +103,7 @@ export const AdminReportsPage: React.FC = () => {
 
           <button
             onClick={exportCSV}
+            disabled={loading || !report}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-temple-700 hover:bg-temple-800 text-white font-bold text-xs shadow-sm transition active:scale-95"
           >
             <Download className="w-4 h-4 text-gold-400" />
@@ -141,6 +112,8 @@ export const AdminReportsPage: React.FC = () => {
         </div>
       </div>
 
+      {loading && <p role="status">Loading sales analytics…</p>}
+      {report && <>
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm space-y-2">
@@ -204,7 +177,7 @@ export const AdminReportsPage: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-stone-100">
                 {itemSales.map((item, idx) => {
-                  const share = totalRevenue > 0 ? (item.revenue / totalRevenue) * 100 : 0;
+                  const share = item.share;
 
                   return (
                     <tr key={idx} className="hover:bg-cream-50/50">
@@ -228,6 +201,7 @@ export const AdminReportsPage: React.FC = () => {
           </div>
         )}
       </div>
+      </>}
     </div>
   );
 };
