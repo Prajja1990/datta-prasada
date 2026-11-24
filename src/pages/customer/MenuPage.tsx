@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCart } from '../../context/CartContext';
-import { store } from '../../services/store';
+import { loadHomeMenu } from '../../services/restaurantDatabase';
 import { MenuItem, Category } from '../../types';
 import { 
   Search, 
@@ -25,19 +25,24 @@ export const MenuPage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>(searchParams.get('category') || 'all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Load categories and items
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    const loadData = () => {
-      setCategories(store.getCategories().filter(c => c.active));
-      setMenuItems(store.getMenuItems());
+    let active = true;
+    const loadData = async () => {
+      try {
+        const data = await loadHomeMenu();
+        if (active) {
+          setCategories(data.categories);
+          setMenuItems(data.menuItems.filter(item => data.categories.some(category => category.id === item.categoryId)));
+          setError(null);
+        }
+      } catch (e: any) { if (active) setError(e.message || 'Unable to load menu.'); }
+      finally { if (active) setLoading(false); }
     };
-    loadData();
-
-    // Subscribe to store updates (e.g., if admin changes item availability or price)
-    const unsub = store.subscribe(() => {
-      loadData();
-    });
-    return unsub;
+    void loadData();
+    const timer = window.setInterval(() => void loadData(), 30000);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
 
   // Update URL param when category changes
@@ -71,6 +76,8 @@ export const MenuPage: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 pb-32">
+      {error && <p role="alert" className="p-4 bg-red-50 text-red-700 rounded-xl">{error}</p>}
+      {loading && <p role="status">Loading menu…</p>}
       {/* Header & Search */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-gold-200/60 pb-6">
         <div>

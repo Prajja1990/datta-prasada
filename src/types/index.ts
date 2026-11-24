@@ -130,6 +130,7 @@ export interface Order {
   tableNumber?: string;
   subtotal: number;
   taxAmount: number;
+  parcelCharge?: number;
   totalAmount: number;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;

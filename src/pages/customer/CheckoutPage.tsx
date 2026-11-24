@@ -1,3 +1,4 @@
+import { usePublicRestaurantProfile } from '../../services/publicRestaurantProfile';
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useLanguage } from '../../context/LanguageContext';
@@ -21,15 +22,18 @@ import {
 
 export const CheckoutPage: React.FC = () => {
   const { language, t } = useLanguage();
-  const { items, orderNotes, subtotal, taxAmount, totalAmount, clearCart } = useCart();
+  const { items, orderNotes, subtotal, taxAmount, totalAmount: foodTotal, clearCart } = useCart();
   const navigate = useNavigate();
 
   // Form State
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [orderType, setOrderType] = useState<OrderType>('DINE_IN');
+  const { profile: restaurantProfile, error: settingsError } = usePublicRestaurantProfile();
+  const parcelCharge = orderType === 'TAKEAWAY' ? Number(restaurantProfile?.parcel_charge || 0) : 0;
+  const totalAmount = Math.round((foodTotal + parcelCharge) * 100) / 100;
   const [tableNumber, setTableNumber] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('UPI');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   
   // Submission & Validation State
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -67,6 +71,10 @@ export const CheckoutPage: React.FC = () => {
 
   const handlePlaceOrder = async () => {
     if (!validateForm()) return;
+    if (orderType === 'TAKEAWAY' && !restaurantProfile) {
+      setErrorMessage('Unable to load parcel charges. Please wait and try again.');
+      return;
+    }
     setIsSubmitting(true);
     setErrorMessage(null);
 
@@ -271,6 +279,7 @@ export const CheckoutPage: React.FC = () => {
                 <input
                   type="radio"
                   name="paymentMethod"
+                  disabled
                   checked={paymentMethod === 'UPI'}
                   onChange={() => setPaymentMethod('UPI')}
                   className="mt-1 text-temple-700 focus:ring-temple-700"
@@ -280,10 +289,10 @@ export const CheckoutPage: React.FC = () => {
                     <CreditCard className="w-4 h-4 text-gold-600" />
                     <span className="font-bold text-sm text-stone-900">{t.checkout.upi}</span>
                     <span className="text-[10px] bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded-full">
-                      Fastest
+                      Unavailable
                     </span>
                   </div>
-                  <p className="text-xs text-stone-500 mt-0.5">{t.checkout.upiDesc}</p>
+                  <p className="text-xs text-stone-500 mt-0.5">Online payments are temporarily unavailable. Please pay cash at the counter.</p>
                 </div>
               </label>
 
@@ -341,6 +350,8 @@ export const CheckoutPage: React.FC = () => {
               <span>GST (5%):</span>
               <span className="font-mono">₹{taxAmount.toFixed(2)}</span>
             </div>
+            {orderType === 'TAKEAWAY' && <div className="flex justify-between text-stone-600"><span>Parcel charge:</span><span className="font-mono">{restaurantProfile ? `₹${parcelCharge.toFixed(2)}` : 'Loading…'}</span></div>}
+            {orderType === 'TAKEAWAY' && settingsError && <p role="alert" className="text-red-700">{settingsError}</p>}
             <div className="flex justify-between font-serif font-black text-lg text-temple-900 pt-2 border-t border-dashed border-stone-200">
               <span>Total Payable:</span>
               <span className="text-gold-700">₹{totalAmount.toFixed(2)}</span>
@@ -356,7 +367,7 @@ export const CheckoutPage: React.FC = () => {
 
           <button
             onClick={handlePlaceOrder}
-            disabled={isSubmitting}
+            disabled={isSubmitting || (orderType === 'TAKEAWAY' && !restaurantProfile)}
             className="w-full py-4 rounded-xl bg-gradient-to-r from-temple-700 to-temple-800 hover:from-temple-800 hover:to-temple-900 disabled:opacity-50 text-white font-serif font-bold text-lg shadow-traditional hover:shadow-gold transition flex items-center justify-center gap-2 active:scale-95"
           >
             {isSubmitting ? (

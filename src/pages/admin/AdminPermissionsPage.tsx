@@ -5,7 +5,7 @@ import {
   ROLE_PERMISSIONS_MAP, 
   PermissionDefinition 
 } from '../../services/auth';
-import { store } from '../../services/store';
+import { loadRolePermissions, setRolePermission, resetRolePermissions } from '../../services/rolePermissions';
 import { UserRoleType, PermissionKey } from '../../types';
 import { 
   ShieldCheck, 
@@ -92,18 +92,17 @@ export const AdminPermissionsPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ENABLED_ONLY' | 'RESTRICTED_ONLY'>('ALL');
   
   // Dynamic Role Permissions Matrix loaded from persistent store
-  const [matrix, setMatrix] = useState<Record<UserRoleType, PermissionKey[]>>(() => store.getRolePermissionsMap());
+  const [matrix, setMatrix] = useState<Record<UserRoleType, PermissionKey[]>>({ SUPER_ADMIN: [], ADMIN: [], STAFF: [], KITCHEN_STAFF: [], CUSTOMER: [] });
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [showResetModal, setShowResetModal] = useState(false);
 
-  // Sync state when store emits update
+  const [busy, setBusy] = useState(false);
+  const [matrixError, setMatrixError] = useState<string | null>(null);
   useEffect(() => {
-    const unsub = store.subscribe((type) => {
-      if (type === 'ROLE_PERMISSIONS_UPDATED') {
-        setMatrix(store.getRolePermissionsMap());
-      }
-    });
-    return unsub;
+    let active = true;
+    loadRolePermissions().then(data => { if (active) setMatrix(data); })
+      .catch(error => { if (active) setMatrixError(error.message); });
+    return () => { active = false; };
   }, []);
 
   // Auto-dismiss toast
@@ -128,53 +127,32 @@ export const AdminPermissionsPage: React.FC = () => {
     return matchesDomain && matchesSearch;
   });
 
-  const handleToggle = (role: UserRoleType, permissionKey: PermissionKey, nextState: boolean) => {
-    const actor = {
-      name: user?.fullName || 'Super Admin',
-      role: user?.roles[0] || 'SUPER_ADMIN',
-    };
-
-    const res = store.toggleRolePermission(role, permissionKey, nextState, actor);
-    if (!res.success) {
-      setToastMessage({
-        type: 'error',
-        text: res.error || 'Failed to update privilege.',
-      });
-      return;
-    }
-
-    const roleInfo = ROLES_LIST.find(r => r.role === role);
-    const permInfo = SYSTEM_PERMISSIONS.find(p => p.key === permissionKey);
-    setToastMessage({
-      type: 'success',
-      text: `${nextState ? 'Enabled' : 'Disabled'} "${permInfo?.name || permissionKey}" for ${roleInfo?.title || role}.`,
-    });
-    setMatrix(store.getRolePermissionsMap());
+  const handleToggle = async (role: UserRoleType, permissionKey: PermissionKey, nextState: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await setRolePermission(role, permissionKey, nextState);
+      setMatrix(await loadRolePermissions());
+      setToastMessage({ type: 'success', text: 'Database permission updated.' });
+    } catch (error: any) { setToastMessage({ type: 'error', text: error.message }); }
+    finally { setBusy(false); }
   };
-
-  const handleResetToDefault = () => {
-    const actor = {
-      name: user?.fullName || 'Super Admin',
-      role: user?.roles[0] || 'SUPER_ADMIN',
-    };
-    const res = store.resetRolePermissionsToDefault(actor);
-    if (res.success) {
-      setMatrix(store.getRolePermissionsMap());
-      setToastMessage({
-        type: 'info',
-        text: 'System Permissions & Privilege Matrix reset to factory defaults.',
-      });
+  const handleResetToDefault = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await resetRolePermissions();
+      setMatrix(await loadRolePermissions());
       setShowResetModal(false);
-    } else {
-      setToastMessage({
-        type: 'error',
-        text: res.error || 'Failed to reset privileges.',
-      });
-    }
+      setToastMessage({ type: 'success', text: 'Database permissions reset.' });
+    } catch (error: any) { setToastMessage({ type: 'error', text: error.message }); }
+    finally { setBusy(false); }
   };
 
   return (
     <div className="p-6 sm:p-8 space-y-6 max-w-7xl mx-auto pb-28 animate-fadeIn">
+      {matrixError && <p role="alert" className="p-4 bg-red-50 text-red-800">{matrixError}</p>}
+      <fieldset disabled={busy || !!matrixError} className="space-y-6">
       {/* Toast Notification */}
       {toastMessage && (
         <div className={`p-4 rounded-2xl border shadow-md flex items-center justify-between gap-3 text-xs font-semibold animate-slideDown ${
@@ -559,6 +537,7 @@ export const AdminPermissionsPage: React.FC = () => {
           </div>
         </div>
       )}
+      </fieldset>
     </div>
   );
 };

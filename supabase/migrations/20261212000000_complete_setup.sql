@@ -371,17 +371,16 @@ DECLARE
     r_kitchen UUID;
     r_customer UUID;
 BEGIN
+    IF to_regclass('public.security_hardening_applied') IS NOT NULL THEN
+        RETURN;
+    END IF;
+
     SELECT id INTO r_super FROM public.roles WHERE name = 'SUPER_ADMIN';
     SELECT id INTO r_admin FROM public.roles WHERE name = 'ADMIN';
     SELECT id INTO r_staff FROM public.roles WHERE name = 'STAFF';
     SELECT id INTO r_kitchen FROM public.roles WHERE name = 'KITCHEN_STAFF';
     SELECT id INTO r_customer FROM public.roles WHERE name = 'CUSTOMER';
 
-    -- Remove stale mappings from earlier seed drafts before applying the canonical matrix.
-    DELETE FROM public.role_permissions rp
-    USING public.roles r
-    WHERE rp.role_id = r.id
-      AND r.name IN ('SUPER_ADMIN', 'ADMIN', 'STAFF', 'KITCHEN_STAFF', 'CUSTOMER');
 
     -- Super Admin gets all permissions
     INSERT INTO public.role_permissions (role_id, permission_id)
@@ -959,38 +958,8 @@ GRANT EXECUTE ON FUNCTION public.set_user_account_active(UUID, BOOLEAN) TO authe
 GRANT EXECUTE ON FUNCTION public.update_user_account(UUID, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_user_account_password(UUID, TEXT) TO authenticated;
 
--- Keep demo accounts idempotent. The hashes are bcrypt hashes; never store plaintext passwords.
-INSERT INTO public.user_accounts (id, full_name, email, mobile, roles, permissions, password_hash, is_active)
-VALUES
-('00000000-0000-0000-0001-000000000001', 'Shri Dattatreya Swamy (Owner)', 'superadmin@dattaprasada.com', '9845000001',
- '["SUPER_ADMIN"]'::jsonb,
- '["dashboard.view","orders.create","orders.view_all","orders.view_own","orders.accept","orders.prepare","orders.mark_ready","orders.complete","orders.cancel","menu.view","menu.create","menu.update","menu.delete","menu.manage_price","users.view","users.create","users.update","users.deactivate","roles.assign","roles.manage","reports.view","reports.export","payments.view","payments.verify","payments.refund","settings.manage","audit_logs.view"]'::jsonb,
- '$2b$10$ET951CuMEX3zUvNfQJrLyu2RNvJt1/VIo8mRVTMDKKqTZuvFOaOp.', TRUE),
-('00000000-0000-0000-0002-000000000002', 'Raghavendra Bhat (Manager)', 'manager@dattaprasada.com', '9845000002',
- '["ADMIN"]'::jsonb,
- '["dashboard.view","orders.create","orders.view_all","orders.view_own","orders.accept","orders.prepare","orders.mark_ready","orders.complete","orders.cancel","menu.view","menu.create","menu.update","menu.delete","menu.manage_price","users.view","users.create","users.update","users.deactivate","reports.view","reports.export","payments.view","payments.verify","payments.refund","audit_logs.view"]'::jsonb,
- '$2b$10$dNWLHistxfNEt1xKOxF0luC2ylSf8818asmEZu5YgYQKGydgp0u6y', TRUE),
-('00000000-0000-0000-0003-000000000003', 'Chethan Kumar (Counter Operator)', 'counter@dattaprasada.com', '9845000003',
- '["STAFF"]'::jsonb,
- '["orders.create","orders.view_all","orders.view_own","orders.accept","orders.mark_ready","orders.complete","orders.cancel","menu.view","payments.view","payments.verify"]'::jsonb,
- '$2b$10$qg.6ODpONIglRNLeOSjRrOZwcTx4fafo4vgqFOfYrSf3YmWJsubzi', TRUE),
-('00000000-0000-0000-0004-000000000004', 'Shankar Gowda (Head Chef)', 'kitchen@dattaprasada.com', '9845000004',
- '["KITCHEN_STAFF"]'::jsonb,
- '["orders.view_all","orders.prepare","orders.mark_ready","menu.view"]'::jsonb,
- '$2b$10$8Ei8GDjqVuVTOtRTvFgK.urTtzsQ7qSWWxlCVCowxyevruZYwZFmK', TRUE),
-('00000000-0000-0000-0005-000000000005', 'Guest Customer', 'guest@dattaprasada.com', '9900000000',
- '["CUSTOMER"]'::jsonb,
- '["orders.create","orders.view_own","menu.view"]'::jsonb,
- '$2b$10$RhkyG/xjQnwh.Q1cq.ibt.4gS3HSPxuX9gmIvAryT4ucLwma6nsG', TRUE)
-ON CONFLICT (id) DO UPDATE SET
-    full_name = EXCLUDED.full_name,
-    email = EXCLUDED.email,
-    mobile = EXCLUDED.mobile,
-    roles = EXCLUDED.roles,
-    permissions = EXCLUDED.permissions,
-    password_hash = EXCLUDED.password_hash,
-    is_active = EXCLUDED.is_active,
-    updated_at = NOW();
+-- Production setup does not seed known demo credentials.
+-- Existing user_accounts records are retained but are not a login authority.
 
 -- ----------------------------------------------------------------------------
 -- 8. Complete RLS policy coverage and automatic Supabase Auth profiles
@@ -1446,146 +1415,8 @@ ALTER FUNCTION public.create_order_with_token(
 ) SET search_path TO public, extensions, pg_temp;
 
 
--- Source: 20261205000000_map_legacy_user_accounts_to_auth_profiles.sql
--- Map legacy user_accounts onto real Supabase Auth identities by normalized email.
--- user_profiles.id references auth.users(id), so rows without a matching Auth
--- identity cannot be copied into the RBAC tables by this migration.
-
--- Populate the Auth-linked profile from the legacy account where a matching
--- Auth user exists. Preserve profile fields already maintained by Auth/app.
-INSERT INTO public.user_profiles (id, full_name, mobile, email, is_active)
-SELECT
-    au.id,
-    ua.full_name,
-    ua.mobile,
-    au.email,
-    ua.is_active
-FROM public.user_accounts AS ua
-JOIN auth.users AS au
-  ON lower(trim(au.email)) = lower(trim(ua.email))
-WHERE au.email IS NOT NULL
-ON CONFLICT (id) DO UPDATE SET
-    full_name = CASE
-        WHEN public.user_profiles.full_name IS NULL OR trim(public.user_profiles.full_name) = ''
-        THEN EXCLUDED.full_name ELSE public.user_profiles.full_name END,
-    mobile = COALESCE(public.user_profiles.mobile, EXCLUDED.mobile),
-    email = EXCLUDED.email,
-    is_active = EXCLUDED.is_active;
-
--- Replace role assignments for mapped users with the roles on their legacy
--- account. Invalid role names are ignored; only seeded RBAC roles are accepted.
-WITH mapped AS (
-    SELECT au.id AS user_id, ua.roles
-    FROM public.user_accounts AS ua
-    JOIN auth.users AS au
-      ON lower(trim(au.email)) = lower(trim(ua.email))
-    WHERE au.email IS NOT NULL
-)
-DELETE FROM public.user_roles AS ur
-USING mapped
-WHERE ur.user_id = mapped.user_id;
-
-INSERT INTO public.user_roles (user_id, role_id)
-SELECT DISTINCT au.id, r.id
-FROM public.user_accounts AS ua
-JOIN auth.users AS au
-  ON lower(trim(au.email)) = lower(trim(ua.email))
-CROSS JOIN LATERAL jsonb_array_elements_text(
-    CASE WHEN jsonb_typeof(ua.roles) = 'array' THEN ua.roles ELSE '[]'::jsonb END
-) AS legacy_role(role_name)
-JOIN public.roles AS r ON r.name = legacy_role.role_name
-WHERE au.email IS NOT NULL
-ON CONFLICT (user_id, role_id) DO NOTHING;
-
--- Review legacy accounts that still need a Supabase Auth identity. Do not
--- create Auth users or copy legacy password hashes: Supabase Auth owns passwords.
-SELECT ua.id AS legacy_account_id, ua.email, ua.full_name, ua.roles
-FROM public.user_accounts AS ua
-LEFT JOIN auth.users AS au
-  ON lower(trim(au.email)) = lower(trim(ua.email))
-WHERE au.id IS NULL
-ORDER BY ua.email;
-
-
--- Source: 20261206000000_import_legacy_staff_profiles_and_roles.sql
--- Import existing public.user_accounts rows into Auth-linked profiles and RBAC.
--- Each account must already have a Supabase Auth identity with the same email.
--- user_accounts IDs are legacy IDs; user_profiles IDs must be auth.users IDs.
-
-DO $$
-DECLARE
-    missing_roles TEXT;
-BEGIN
-    SELECT string_agg(DISTINCT legacy_role.role_name, ', ' ORDER BY legacy_role.role_name)
-    INTO missing_roles
-    FROM public.user_accounts AS ua
-    CROSS JOIN LATERAL jsonb_array_elements_text(
-        CASE WHEN jsonb_typeof(ua.roles) = 'array' THEN ua.roles ELSE '[]'::jsonb END
-    ) AS legacy_role(role_name)
-    WHERE NOT EXISTS (
-        SELECT 1 FROM public.roles AS r WHERE r.name = legacy_role.role_name
-    );
-
-    IF missing_roles IS NOT NULL THEN
-        RAISE EXCEPTION 'Create or seed these RBAC roles before importing: %', missing_roles;
-    END IF;
-END;
-$$;
-
--- Copy account profile data using the canonical Supabase Auth UUID.
-INSERT INTO public.user_profiles (id, full_name, mobile, email, is_active)
-SELECT au.id, ua.full_name, ua.mobile, au.email, ua.is_active
-FROM public.user_accounts AS ua
-JOIN auth.users AS au ON lower(trim(au.email)) = lower(trim(ua.email))
-ON CONFLICT (id) DO UPDATE SET
-    full_name = EXCLUDED.full_name,
-    mobile = EXCLUDED.mobile,
-    email = EXCLUDED.email,
-    is_active = EXCLUDED.is_active;
-
--- Replace default/backfilled roles for these imported users with the roles
--- already stored in user_accounts. Role permissions remain sourced from RBAC.
-WITH mapped_users AS (
-    SELECT au.id AS user_id
-    FROM public.user_accounts AS ua
-    JOIN auth.users AS au ON lower(trim(au.email)) = lower(trim(ua.email))
-)
-DELETE FROM public.user_roles AS ur
-USING mapped_users AS mapped
-WHERE ur.user_id = mapped.user_id;
-
-INSERT INTO public.user_roles (user_id, role_id)
-SELECT DISTINCT au.id, r.id
-FROM public.user_accounts AS ua
-JOIN auth.users AS au ON lower(trim(au.email)) = lower(trim(ua.email))
-CROSS JOIN LATERAL jsonb_array_elements_text(
-    CASE WHEN jsonb_typeof(ua.roles) = 'array' THEN ua.roles ELSE '[]'::jsonb END
-) AS legacy_role(role_name)
-JOIN public.roles AS r ON r.name = legacy_role.role_name
-ON CONFLICT (user_id, role_id) DO NOTHING;
-
--- Verify mapped profiles and roles.
-SELECT p.id, p.email, p.full_name, p.is_active,
-       COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::TEXT[]) AS roles
-FROM public.user_profiles AS p
-LEFT JOIN public.user_roles AS ur ON ur.user_id = p.id
-LEFT JOIN public.roles AS r ON r.id = ur.role_id
-WHERE EXISTS (
-    SELECT 1 FROM public.user_accounts AS ua
-    WHERE lower(trim(ua.email)) = lower(trim(p.email))
-)
-GROUP BY p.id, p.email, p.full_name, p.is_active
-ORDER BY p.email;
-
--- Accounts still absent from Supabase Auth are intentionally not inserted into
--- user_profiles (their IDs must reference auth.users). The legacy-login Edge
--- Function provisions these accounts after validating their legacy password.
-SELECT ua.email AS waiting_for_first_legacy_login, ua.full_name, ua.roles
-FROM public.user_accounts AS ua
-LEFT JOIN auth.users AS au ON lower(trim(au.email)) = lower(trim(ua.email))
-WHERE au.id IS NULL
-ORDER BY ua.email;
-
+-- Legacy account/profile imports are retired. Auth and RBAC are authoritative.
+-- Provision accounts using user-admin; do not overwrite profiles/roles from legacy rows.
 
 -- Source: 20261207000000_legacy_auth_bridge.sql
 -- Rate-limit legacy credential verification performed by the legacy-login
@@ -1749,13 +1580,15 @@ USING (public.auth_has_permission('reports.view') OR public.auth_has_permission(
 
 -- Source: 20261209000000_database_sales_analytics.sql
 -- PostgreSQL owns report filtering, totals and dish analytics.
-CREATE OR REPLACE FUNCTION public.get_sales_report(p_range TEXT DEFAULT 'TODAY')
+DROP FUNCTION IF EXISTS public.get_sales_report(TEXT);
+CREATE OR REPLACE FUNCTION public.get_sales_report(p_range TEXT DEFAULT 'TODAY', p_start_date DATE DEFAULT NULL, p_end_date DATE DEFAULT NULL)
 RETURNS JSONB
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_since TIMESTAMPTZ;
+    v_until TIMESTAMPTZ := NOW();
     v_result JSONB;
 BEGIN
     IF NOT public.auth_has_permission('reports.view') THEN
@@ -1765,12 +1598,18 @@ BEGIN
         WHEN 'TODAY' THEN v_since := date_trunc('day', NOW() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata';
         WHEN 'WEEK' THEN v_since := NOW() - INTERVAL '7 days';
         WHEN 'MONTH' THEN v_since := NOW() - INTERVAL '30 days';
+        WHEN 'CUSTOM' THEN
+            IF p_start_date IS NULL OR p_end_date IS NULL OR p_end_date < p_start_date THEN
+                RAISE EXCEPTION 'Select a valid start and end date' USING ERRCODE = '22023';
+            END IF;
+            v_since := p_start_date::TIMESTAMP AT TIME ZONE 'Asia/Kolkata';
+            v_until := (p_end_date + 1)::TIMESTAMP AT TIME ZONE 'Asia/Kolkata';
         WHEN 'ALL' THEN v_since := '-infinity'::TIMESTAMPTZ;
         ELSE RAISE EXCEPTION 'Invalid report date range' USING ERRCODE = '22023';
     END CASE;
 
     WITH selected_orders AS MATERIALIZED (
-        SELECT * FROM public.orders WHERE created_at >= v_since AND created_at <= NOW()
+        SELECT * FROM public.orders WHERE created_at >= v_since AND created_at < v_until
     ), totals AS (
         SELECT COUNT(*) AS order_count,
             COUNT(*) FILTER (WHERE payment_status = 'PAID') AS paid_count,
@@ -1794,13 +1633,25 @@ BEGIN
             'share', CASE WHEN t.revenue > 0 THEN d.revenue * 100 / t.revenue ELSE 0 END
         ) ORDER BY d.revenue DESC, d.name) FROM dishes d), '[]'::JSONB),
         'orders', COALESCE((SELECT jsonb_agg(to_jsonb(o) ORDER BY o.created_at DESC, o.id) FROM selected_orders o), '[]'::JSONB),
+        'dailySales', COALESCE((
+            SELECT jsonb_agg(to_jsonb(daily) ORDER BY daily.date DESC)
+            FROM (
+                SELECT (o.created_at AT TIME ZONE 'Asia/Kolkata')::DATE AS date,
+                    COUNT(*) AS orders,
+                    COUNT(*) FILTER (WHERE o.payment_status = 'PAID') AS paid_orders,
+                    COALESCE(SUM(o.total_amount) FILTER (WHERE o.payment_status = 'PAID'), 0) AS revenue,
+                    COALESCE(SUM(o.total_amount) FILTER (WHERE o.payment_status = 'PAID' AND o.payment_method = 'CASH'), 0) AS cash,
+                    COALESCE(SUM(o.total_amount) FILTER (WHERE o.payment_status = 'PAID' AND o.payment_method = 'UPI'), 0) AS upi
+                FROM selected_orders o GROUP BY (o.created_at AT TIME ZONE 'Asia/Kolkata')::DATE
+            ) daily
+        ), '[]'::JSONB),
         'generatedAt', NOW()
     ) INTO v_result FROM totals t;
     RETURN v_result;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.get_sales_report(TEXT) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.get_sales_report(TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.get_sales_report(TEXT, DATE, DATE) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_sales_report(TEXT, DATE, DATE) TO authenticated;
 
 
 -- Source: 20261210000000_public_restaurant_profile.sql
@@ -1921,5 +1772,474 @@ $$;
 REVOKE ALL ON FUNCTION public.save_restaurant_settings(JSONB) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.save_restaurant_settings(JSONB) TO authenticated;
 
+
+
+-- Security hardening (also available as incremental migration).
+
+-- Persist a marker so rerunning setup does not restore removed baseline grants.
+CREATE TABLE IF NOT EXISTS public.security_hardening_applied (id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id));
+ALTER TABLE public.security_hardening_applied ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.security_hardening_applied FROM PUBLIC, anon, authenticated;
+INSERT INTO public.security_hardening_applied VALUES (TRUE) ON CONFLICT DO NOTHING;
+
+-- No direct profile writes, including edits to identity email or is_active.
+REVOKE UPDATE ON public.user_profiles FROM PUBLIC, anon, authenticated;
+DROP POLICY IF EXISTS "Users can update own profile or authorized users" ON public.user_profiles;
+
+-- Never allow legacy credential/role administration to bypass the Auth service.
+REVOKE ALL ON FUNCTION public.authenticate_user(TEXT,TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.create_user_account(TEXT,TEXT,TEXT,TEXT,TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.set_user_account_role(UUID,TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.set_user_account_active(UUID,BOOLEAN) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.update_user_account(UUID,TEXT,TEXT,TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.set_user_account_password(UUID,TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.allow_legacy_auth_attempt(TEXT) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.clear_legacy_auth_attempts(TEXT) FROM PUBLIC, anon, authenticated, service_role;
+-- Invalidate legacy credentials without deleting account metadata.
+UPDATE public.user_accounts SET password_hash = '', updated_at = NOW() WHERE password_hash <> '';
+
+-- Mutating role grants must go through the audited, permission-checked RPCs.
+REVOKE INSERT, UPDATE, DELETE ON public.role_permissions FROM PUBLIC, anon, authenticated;
+CREATE TABLE IF NOT EXISTS public.default_role_permissions (
+    role_name TEXT NOT NULL REFERENCES public.roles(name),
+    permission_key TEXT NOT NULL REFERENCES public.permissions(permission_key),
+    PRIMARY KEY (role_name, permission_key)
+);
+ALTER TABLE public.default_role_permissions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.default_role_permissions FROM PUBLIC, anon, authenticated;
+INSERT INTO public.default_role_permissions VALUES
+('SUPER_ADMIN', 'dashboard.view'),
+('SUPER_ADMIN', 'orders.create'),
+('SUPER_ADMIN', 'orders.view_all'),
+('SUPER_ADMIN', 'orders.view_own'),
+('SUPER_ADMIN', 'orders.accept'),
+('SUPER_ADMIN', 'orders.prepare'),
+('SUPER_ADMIN', 'orders.mark_ready'),
+('SUPER_ADMIN', 'orders.complete'),
+('SUPER_ADMIN', 'orders.cancel'),
+('SUPER_ADMIN', 'menu.view'),
+('SUPER_ADMIN', 'menu.create'),
+('SUPER_ADMIN', 'menu.update'),
+('SUPER_ADMIN', 'menu.delete'),
+('SUPER_ADMIN', 'menu.manage_price'),
+('SUPER_ADMIN', 'users.view'),
+('SUPER_ADMIN', 'users.create'),
+('SUPER_ADMIN', 'users.update'),
+('SUPER_ADMIN', 'users.deactivate'),
+('SUPER_ADMIN', 'roles.assign'),
+('SUPER_ADMIN', 'roles.manage'),
+('SUPER_ADMIN', 'reports.view'),
+('SUPER_ADMIN', 'reports.export'),
+('SUPER_ADMIN', 'payments.view'),
+('SUPER_ADMIN', 'payments.verify'),
+('SUPER_ADMIN', 'payments.refund'),
+('SUPER_ADMIN', 'settings.manage'),
+('SUPER_ADMIN', 'audit_logs.view'),
+('ADMIN', 'dashboard.view'),
+('ADMIN', 'orders.create'),
+('ADMIN', 'orders.view_all'),
+('ADMIN', 'orders.view_own'),
+('ADMIN', 'orders.accept'),
+('ADMIN', 'orders.prepare'),
+('ADMIN', 'orders.mark_ready'),
+('ADMIN', 'orders.complete'),
+('ADMIN', 'orders.cancel'),
+('ADMIN', 'menu.view'),
+('ADMIN', 'menu.create'),
+('ADMIN', 'menu.update'),
+('ADMIN', 'menu.delete'),
+('ADMIN', 'menu.manage_price'),
+('ADMIN', 'users.view'),
+('ADMIN', 'users.create'),
+('ADMIN', 'users.update'),
+('ADMIN', 'users.deactivate'),
+('ADMIN', 'reports.view'),
+('ADMIN', 'reports.export'),
+('ADMIN', 'payments.view'),
+('ADMIN', 'payments.verify'),
+('ADMIN', 'payments.refund'),
+('ADMIN', 'audit_logs.view'),
+('STAFF', 'dashboard.view'),
+('STAFF', 'orders.create'),
+('STAFF', 'orders.view_all'),
+('STAFF', 'orders.view_own'),
+('STAFF', 'orders.accept'),
+('STAFF', 'orders.mark_ready'),
+('STAFF', 'orders.complete'),
+('STAFF', 'orders.cancel'),
+('STAFF', 'menu.view'),
+('STAFF', 'payments.view'),
+('STAFF', 'payments.verify'),
+('KITCHEN_STAFF', 'orders.view_all'),
+('KITCHEN_STAFF', 'orders.prepare'),
+('KITCHEN_STAFF', 'orders.mark_ready'),
+('KITCHEN_STAFF', 'menu.view'),
+('CUSTOMER', 'orders.create'),
+('CUSTOMER', 'orders.view_own'),
+('CUSTOMER', 'menu.view')
+ON CONFLICT DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.get_role_permission_matrix()
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE result JSONB;
+BEGIN
+    IF NOT public.auth_has_permission('roles.manage') THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    SELECT jsonb_object_agg(name, grants) INTO result FROM (
+        SELECT r.name, COALESCE(jsonb_agg(p.permission_key ORDER BY p.permission_key)
+          FILTER (WHERE p.permission_key IS NOT NULL), '[]'::JSONB) AS grants
+        FROM public.roles r LEFT JOIN public.role_permissions rp ON rp.role_id = r.id
+        LEFT JOIN public.permissions p ON p.id = rp.permission_id GROUP BY r.name
+    ) matrix;
+    RETURN result;
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.set_role_permission(p_role TEXT, p_permission TEXT, p_enabled BOOLEAN)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE role_uuid UUID; permission_uuid UUID;
+BEGIN
+    IF NOT public.auth_has_role('SUPER_ADMIN') OR NOT public.auth_has_permission('roles.manage') THEN
+        RAISE EXCEPTION 'Only an active Super Admin may manage permissions' USING ERRCODE = '42501';
+    END IF;
+    IF p_role = 'SUPER_ADMIN' AND p_permission IN ('roles.manage','roles.assign','users.view','users.update') AND p_enabled IS NOT TRUE THEN
+        RAISE EXCEPTION 'Owner recovery permissions cannot be removed';
+    END IF;
+    SELECT id INTO STRICT role_uuid FROM public.roles WHERE name = p_role FOR UPDATE;
+    SELECT id INTO STRICT permission_uuid FROM public.permissions WHERE permission_key = p_permission;
+    IF p_enabled IS NULL THEN RAISE EXCEPTION 'Enabled is required'; END IF;
+    IF p_enabled THEN
+        INSERT INTO public.role_permissions VALUES (role_uuid, permission_uuid) ON CONFLICT DO NOTHING;
+    ELSE
+        DELETE FROM public.role_permissions WHERE role_id = role_uuid AND permission_id = permission_uuid;
+    END IF;
+    INSERT INTO public.audit_logs(actor_id, action, entity_type, new_values)
+    VALUES (auth.uid(), 'ROLE_PERMISSION_UPDATED', 'ROLE', jsonb_build_object('role',p_role,'permission',p_permission,'enabled',p_enabled));
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.reset_role_permissions()
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+    IF NOT public.auth_has_role('SUPER_ADMIN') OR NOT public.auth_has_permission('roles.manage') THEN
+        RAISE EXCEPTION 'Only an active Super Admin may reset permissions' USING ERRCODE = '42501';
+    END IF;
+    PERFORM id FROM public.roles ORDER BY id FOR UPDATE;
+    DELETE FROM public.role_permissions rp USING public.roles r
+    WHERE rp.role_id = r.id AND r.name IN ('SUPER_ADMIN','ADMIN','STAFF','KITCHEN_STAFF','CUSTOMER');
+    INSERT INTO public.role_permissions(role_id, permission_id)
+    SELECT r.id, p.id FROM public.default_role_permissions d
+    JOIN public.roles r ON r.name=d.role_name JOIN public.permissions p ON p.permission_key=d.permission_key
+    ON CONFLICT DO NOTHING;
+    INSERT INTO public.audit_logs(actor_id, action, entity_type)
+    VALUES (auth.uid(), 'ROLE_PERMISSIONS_RESET', 'ROLE');
+END;
+$$;
+REVOKE ALL ON FUNCTION public.get_role_permission_matrix() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.set_role_permission(TEXT,TEXT,BOOLEAN) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.reset_role_permissions() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_role_permission_matrix() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.set_role_permission(TEXT,TEXT,BOOLEAN) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.reset_role_permissions() TO authenticated;
+CREATE OR REPLACE FUNCTION public.create_order_with_token(
+    p_customer_name TEXT,
+    p_customer_mobile TEXT,
+    p_order_type TEXT,
+    p_table_number TEXT,
+    p_subtotal DECIMAL,
+    p_tax_amount DECIMAL,
+    p_total_amount DECIMAL,
+    p_payment_method TEXT,
+    p_payment_status TEXT,
+    p_notes TEXT,
+    p_items JSONB,
+    p_customer_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+    v_today DATE := CURRENT_DATE;
+    v_seq INT;
+    v_token_str TEXT;
+    v_tracking_token TEXT;
+    v_order_id UUID;
+    v_customer_id UUID := auth.uid();
+    v_item JSONB;
+    v_menu_item public.menu_items%ROWTYPE;
+    v_quantity INT;
+    v_subtotal NUMERIC(10,2) := 0;
+    v_tax_amount NUMERIC(10,2);
+    v_total_amount NUMERIC(10,2);
+    v_max_prep INT := 10;
+BEGIN
+    IF NULLIF(trim(p_customer_name), '') IS NULL OR length(regexp_replace(COALESCE(p_customer_mobile, ''), '[^0-9]', '', 'g')) < 10 THEN
+        RAISE EXCEPTION 'Customer name and a valid mobile number are required' USING ERRCODE = '22023';
+    END IF;
+    IF p_order_type NOT IN ('DINE_IN', 'TAKEAWAY') OR p_payment_method NOT IN ('UPI', 'CASH') THEN
+        RAISE EXCEPTION 'Invalid order type or payment method' USING ERRCODE = '22023';
+    END IF;
+    IF p_payment_status IS DISTINCT FROM 'PENDING' THEN
+        RAISE EXCEPTION 'Invalid payment status' USING ERRCODE = '22023';
+    END IF;
+    IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 OR jsonb_array_length(p_items) > 100 THEN
+        RAISE EXCEPTION 'An order must contain between 1 and 100 items' USING ERRCODE = '22023';
+    END IF;
+
+    -- Validate availability and calculate totals from current database menu prices.
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_items)
+    LOOP
+        IF COALESCE(v_item->>'menu_item_id', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            RAISE EXCEPTION 'Invalid menu item reference' USING ERRCODE = '22023';
+        END IF;
+        v_quantity := (v_item->>'quantity')::INT;
+        IF v_quantity < 1 OR v_quantity > 100 THEN
+            RAISE EXCEPTION 'Item quantity must be between 1 and 100' USING ERRCODE = '22023';
+        END IF;
+        SELECT * INTO v_menu_item FROM public.menu_items
+        WHERE id = (v_item->>'menu_item_id')::UUID AND available = TRUE
+        FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'A selected menu item is unavailable' USING ERRCODE = '22023';
+        END IF;
+        v_subtotal := v_subtotal + (v_menu_item.price * v_quantity);
+        v_max_prep := GREATEST(v_max_prep, COALESCE(v_menu_item.preparation_time_minutes, 10));
+    END LOOP;
+    v_tax_amount := round(v_subtotal * 0.05, 2);
+    v_total_amount := v_subtotal + v_tax_amount;
+
+    INSERT INTO public.daily_token_sequences (token_date, last_sequence)
+    VALUES (v_today, 1)
+    ON CONFLICT (token_date)
+    DO UPDATE SET last_sequence = daily_token_sequences.last_sequence + 1
+    RETURNING last_sequence INTO v_seq;
+
+    v_token_str := 'DP-' || LPAD(v_seq::TEXT, 3, '0');
+    v_tracking_token := encode(gen_random_bytes(16), 'hex');
+
+    INSERT INTO public.orders (
+        token_number, token_date, tracking_token, customer_id, customer_name,
+        customer_mobile, order_type, table_number, subtotal, tax_amount,
+        total_amount, payment_method, payment_status, order_status, notes,
+        estimated_prep_time_minutes
+    ) VALUES (
+        v_token_str, v_today, v_tracking_token, v_customer_id, trim(p_customer_name),
+        regexp_replace(p_customer_mobile, '[^0-9]', '', 'g'), p_order_type,
+        CASE WHEN p_order_type = 'DINE_IN' THEN NULLIF(trim(p_table_number), '') ELSE NULL END,
+        v_subtotal, v_tax_amount, v_total_amount, p_payment_method, 'PENDING',
+        'PLACED', NULLIF(trim(p_notes), ''), v_max_prep
+    ) RETURNING id INTO v_order_id;
+
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_items)
+    LOOP
+        SELECT * INTO STRICT v_menu_item FROM public.menu_items
+        WHERE id = (v_item->>'menu_item_id')::UUID AND available = TRUE;
+        v_quantity := (v_item->>'quantity')::INT;
+        INSERT INTO public.order_items (
+            order_id, menu_item_id, item_name, item_name_kn, quantity, unit_price, total_price
+        ) VALUES (
+            v_order_id, v_menu_item.id, v_menu_item.name, v_menu_item.name_kn,
+            v_quantity, v_menu_item.price, v_menu_item.price * v_quantity
+        );
+    END LOOP;
+
+    INSERT INTO public.order_status_history (order_id, previous_status, new_status, changed_by, changed_by_name, reason)
+    VALUES (v_order_id, NULL, 'PLACED', v_customer_id, trim(p_customer_name), 'Order created successfully');
+
+    RETURN jsonb_build_object(
+        'order_id', v_order_id, 'token_number', v_token_str,
+        'token_date', v_today, 'tracking_token', v_tracking_token,
+        'status', 'PLACED', 'subtotal', v_subtotal,
+        'tax_amount', v_tax_amount, 'total_amount', v_total_amount
+    );
+END;
+$$;
+REVOKE ALL ON FUNCTION public.create_order_with_token(TEXT, TEXT, TEXT, TEXT, DECIMAL, DECIMAL, DECIMAL, TEXT, TEXT, TEXT, JSONB, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_order_with_token(TEXT, TEXT, TEXT, TEXT, DECIMAL, DECIMAL, DECIMAL, TEXT, TEXT, TEXT, JSONB, UUID) TO anon, authenticated;
+
+
+
+
+
+-- Takeaway parcel charges
+
+-- A fixed charge per takeaway order, inclusive of any applicable packing tax.
+-- Default zero avoids imposing an unapproved charge; configure in Settings.
+ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS parcel_charge NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (parcel_charge >= 0);
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS parcel_charge NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (parcel_charge >= 0);
+CREATE OR REPLACE FUNCTION public.save_restaurant_settings(p_settings JSONB)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_old JSONB;
+    v_new JSONB;
+BEGIN
+    IF NOT public.auth_has_permission('settings.manage') THEN
+        RAISE EXCEPTION 'Permission denied: settings.manage is required' USING ERRCODE = '42501';
+    END IF;
+    IF p_settings ? 'home_content' AND (
+        jsonb_typeof(p_settings->'home_content') IS DISTINCT FROM 'object'
+        OR EXISTS (SELECT 1 FROM jsonb_each(p_settings->'home_content') WHERE jsonb_typeof(value) <> 'string')
+    ) THEN RAISE EXCEPTION 'Home content must contain text fields only'; END IF;
+    SELECT to_jsonb(s) INTO v_old FROM public.restaurant_settings s WHERE id = 1 FOR UPDATE;
+    UPDATE public.restaurant_settings SET
+        parcel_charge = COALESCE((p_settings->>'parcel_charge')::NUMERIC, parcel_charge),
+        home_content = COALESCE(p_settings->'home_content', home_content),
+        restaurant_name = trim(p_settings->>'restaurant_name'),
+        opening_hours = COALESCE(p_settings->>'opening_hours', opening_hours),
+        tagline = p_settings->>'tagline',
+        tagline_kn = p_settings->>'tagline_kn',
+        address = p_settings->>'address',
+        phone = p_settings->>'phone',
+        upi_vpa = p_settings->>'upi_vpa',
+        token_prefix = trim(p_settings->>'token_prefix'),
+        gst_rate = (p_settings->>'gst_rate')::NUMERIC,
+        thermal_width = p_settings->>'thermal_width',
+        updated_at = NOW(), updated_by = auth.uid()
+    WHERE id = 1;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Restaurant settings have not been initialized'; END IF;
+    SELECT to_jsonb(s) INTO v_new FROM public.restaurant_settings s WHERE id = 1;
+    INSERT INTO public.audit_logs (actor_id, actor_name, action, entity_type, old_values, new_values)
+    VALUES (auth.uid(), (SELECT full_name FROM public.user_profiles WHERE id = auth.uid()),
+        'SETTINGS_UPDATED', 'SETTING', v_old, v_new);
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.get_public_restaurant_profile()
+RETURNS JSONB
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+    SELECT jsonb_build_object(
+        'restaurant_name', restaurant_name, 'tagline', tagline,
+        'tagline_kn', tagline_kn, 'address', address,
+        'phone', phone, 'opening_hours', opening_hours, 'home_content', home_content, 'parcel_charge', parcel_charge
+    )
+    FROM public.restaurant_settings WHERE id = 1;
+$$;
+CREATE OR REPLACE FUNCTION public.create_order_with_token(
+    p_customer_name TEXT,
+    p_customer_mobile TEXT,
+    p_order_type TEXT,
+    p_table_number TEXT,
+    p_subtotal DECIMAL,
+    p_tax_amount DECIMAL,
+    p_total_amount DECIMAL,
+    p_payment_method TEXT,
+    p_payment_status TEXT,
+    p_notes TEXT,
+    p_items JSONB,
+    p_customer_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+    v_today DATE := CURRENT_DATE;
+    v_seq INT;
+    v_token_str TEXT;
+    v_tracking_token TEXT;
+    v_order_id UUID;
+    v_customer_id UUID := auth.uid();
+    v_item JSONB;
+    v_menu_item public.menu_items%ROWTYPE;
+    v_quantity INT;
+    v_subtotal NUMERIC(10,2) := 0;
+    v_tax_amount NUMERIC(10,2);
+    v_parcel_charge NUMERIC(10,2) := 0;
+    v_total_amount NUMERIC(10,2);
+    v_max_prep INT := 10;
+BEGIN
+    IF NULLIF(trim(p_customer_name), '') IS NULL OR length(regexp_replace(COALESCE(p_customer_mobile, ''), '[^0-9]', '', 'g')) < 10 THEN
+        RAISE EXCEPTION 'Customer name and a valid mobile number are required' USING ERRCODE = '22023';
+    END IF;
+    IF p_order_type NOT IN ('DINE_IN', 'TAKEAWAY') OR p_payment_method NOT IN ('UPI', 'CASH') THEN
+        RAISE EXCEPTION 'Invalid order type or payment method' USING ERRCODE = '22023';
+    END IF;
+    IF p_payment_status IS DISTINCT FROM 'PENDING' THEN
+        RAISE EXCEPTION 'Invalid payment status' USING ERRCODE = '22023';
+    END IF;
+    IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 OR jsonb_array_length(p_items) > 100 THEN
+        RAISE EXCEPTION 'An order must contain between 1 and 100 items' USING ERRCODE = '22023';
+    END IF;
+
+    -- Validate availability and calculate totals from current database menu prices.
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_items)
+    LOOP
+        IF COALESCE(v_item->>'menu_item_id', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            RAISE EXCEPTION 'Invalid menu item reference' USING ERRCODE = '22023';
+        END IF;
+        v_quantity := (v_item->>'quantity')::INT;
+        IF v_quantity < 1 OR v_quantity > 100 THEN
+            RAISE EXCEPTION 'Item quantity must be between 1 and 100' USING ERRCODE = '22023';
+        END IF;
+        SELECT * INTO v_menu_item FROM public.menu_items
+        WHERE id = (v_item->>'menu_item_id')::UUID AND available = TRUE
+        FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'A selected menu item is unavailable' USING ERRCODE = '22023';
+        END IF;
+        v_subtotal := v_subtotal + (v_menu_item.price * v_quantity);
+        v_max_prep := GREATEST(v_max_prep, COALESCE(v_menu_item.preparation_time_minutes, 10));
+    END LOOP;
+    v_tax_amount := round(v_subtotal * 0.05, 2);
+    IF p_order_type = 'TAKEAWAY' THEN
+        SELECT parcel_charge INTO STRICT v_parcel_charge FROM public.restaurant_settings WHERE id = 1;
+    END IF;
+    v_total_amount := v_subtotal + v_tax_amount + v_parcel_charge;
+
+    INSERT INTO public.daily_token_sequences (token_date, last_sequence)
+    VALUES (v_today, 1)
+    ON CONFLICT (token_date)
+    DO UPDATE SET last_sequence = daily_token_sequences.last_sequence + 1
+    RETURNING last_sequence INTO v_seq;
+
+    v_token_str := 'DP-' || LPAD(v_seq::TEXT, 3, '0');
+    v_tracking_token := encode(gen_random_bytes(16), 'hex');
+
+    INSERT INTO public.orders (
+        token_number, token_date, tracking_token, customer_id, customer_name,
+        customer_mobile, order_type, table_number, subtotal, tax_amount,
+        total_amount, parcel_charge, payment_method, payment_status, order_status, notes,
+        estimated_prep_time_minutes
+    ) VALUES (
+        v_token_str, v_today, v_tracking_token, v_customer_id, trim(p_customer_name),
+        regexp_replace(p_customer_mobile, '[^0-9]', '', 'g'), p_order_type,
+        CASE WHEN p_order_type = 'DINE_IN' THEN NULLIF(trim(p_table_number), '') ELSE NULL END,
+        v_subtotal, v_tax_amount, v_total_amount, v_parcel_charge, p_payment_method, 'PENDING',
+        'PLACED', NULLIF(trim(p_notes), ''), v_max_prep
+    ) RETURNING id INTO v_order_id;
+
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_items)
+    LOOP
+        SELECT * INTO STRICT v_menu_item FROM public.menu_items
+        WHERE id = (v_item->>'menu_item_id')::UUID AND available = TRUE;
+        v_quantity := (v_item->>'quantity')::INT;
+        INSERT INTO public.order_items (
+            order_id, menu_item_id, item_name, item_name_kn, quantity, unit_price, total_price
+        ) VALUES (
+            v_order_id, v_menu_item.id, v_menu_item.name, v_menu_item.name_kn,
+            v_quantity, v_menu_item.price, v_menu_item.price * v_quantity
+        );
+    END LOOP;
+
+    INSERT INTO public.order_status_history (order_id, previous_status, new_status, changed_by, changed_by_name, reason)
+    VALUES (v_order_id, NULL, 'PLACED', v_customer_id, trim(p_customer_name), 'Order created successfully');
+
+    RETURN jsonb_build_object(
+        'order_id', v_order_id, 'token_number', v_token_str,
+        'token_date', v_today, 'tracking_token', v_tracking_token,
+        'status', 'PLACED', 'subtotal', v_subtotal,
+        'tax_amount', v_tax_amount, 'parcel_charge', v_parcel_charge, 'total_amount', v_total_amount
+    );
+END;
+$$;
 
 COMMIT;

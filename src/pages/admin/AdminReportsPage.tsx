@@ -14,6 +14,9 @@ import {
 export const AdminReportsPage: React.FC = () => {
   const [report, setReport] = useState<SalesReport | null>(null);
   const [dateRange, setDateRange] = useState<SalesReportRange>('TODAY');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -24,7 +27,10 @@ export const AdminReportsPage: React.FC = () => {
       if (pending) return;
       pending = true;
       try {
-        const data = await loadSalesReport(dateRange);
+        if (dateRange === 'CUSTOM' && (!startDate || !endDate || startDate > endDate)) {
+          throw new Error('Select a valid start and end date.');
+        }
+        const data = await loadSalesReport(dateRange, startDate, endDate);
         if (active) { setReport(data); setLoadError(null); }
       } catch (error: any) {
         if (active) { setLoadError(error.message || 'Unable to load database report.'); setReport(null); }
@@ -35,16 +41,16 @@ export const AdminReportsPage: React.FC = () => {
     void load();
     const timer = window.setInterval(() => void load(), 30000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [dateRange]);
+  }, [dateRange, startDate, endDate]);
 
   const {
     totalRevenue = 0, totalOrdersCount = 0, paidOrdersCount = 0,
-    aov = 0, cashTotal = 0, upiTotal = 0, itemSales = [], orders: filteredOrders = [],
+    aov = 0, cashTotal = 0, upiTotal = 0, itemSales = [], orders: filteredOrders = [], dailySales = [],
   } = report || {};
 
   // CSV Export
   const exportCSV = () => {
-    const headers = ['Order ID', 'Token', 'Date', 'Customer', 'Mobile', 'Type', 'Table', 'Subtotal', 'Tax', 'Total', 'Payment Method', 'Payment Status', 'Order Status'];
+    const headers = ['Order ID', 'Token', 'Date', 'Customer', 'Mobile', 'Type', 'Table', 'Subtotal', 'Tax', 'Parcel Charge', 'Total', 'Payment Method', 'Payment Status', 'Order Status'];
     const rows = filteredOrders.map(o => [
       o.id,
       o.tokenNumber,
@@ -55,6 +61,7 @@ export const AdminReportsPage: React.FC = () => {
       o.tableNumber || '',
       o.subtotal,
       o.taxAmount,
+      o.parcelCharge || 0,
       o.totalAmount,
       o.paymentMethod,
       o.paymentStatus,
@@ -65,7 +72,7 @@ export const AdminReportsPage: React.FC = () => {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `DattaPrasada_Sales_Report_${dateRange}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `DattaPrasada_Sales_Report_${dateRange === 'CUSTOM' ? startDate + '_to_' + endDate : dateRange + '_' + today}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -85,10 +92,10 @@ export const AdminReportsPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Date range selector */}
           <div className="flex bg-stone-200 p-1 rounded-xl text-xs font-bold">
-            {(['TODAY', 'WEEK', 'MONTH', 'ALL'] as const).map((r) => (
+            {(['TODAY', 'WEEK', 'MONTH', 'ALL', 'CUSTOM'] as const).map((r) => (
               <button
                 key={r}
                 onClick={() => setDateRange(r)}
@@ -96,7 +103,7 @@ export const AdminReportsPage: React.FC = () => {
                   dateRange === r ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-600 hover:text-stone-900'
                 }`}
               >
-                {r === 'TODAY' ? 'Today' : r === 'WEEK' ? '7 Days' : r === 'MONTH' ? '30 Days' : 'All Time'}
+                {r === 'TODAY' ? 'Today' : r === 'WEEK' ? '7 Days' : r === 'MONTH' ? '30 Days' : r === 'ALL' ? 'All Time' : 'By Date'}
               </button>
             ))}
           </div>
@@ -112,6 +119,17 @@ export const AdminReportsPage: React.FC = () => {
         </div>
       </div>
 
+      {dateRange === 'CUSTOM' && (
+        <div className="flex flex-wrap gap-4 items-end">
+          <label className="text-sm font-semibold">From date
+            <input type="date" aria-label="Report start date" value={startDate} onChange={e => setStartDate(e.target.value)} className="block border rounded-lg p-2 mt-1" />
+          </label>
+          <label className="text-sm font-semibold">To date
+            <input type="date" aria-label="Report end date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} className="block border rounded-lg p-2 mt-1" />
+          </label>
+          <p className="text-sm text-stone-500">Select the same date for a single-day report. Dates use India time (IST).</p>
+        </div>
+      )}
       {loading && <p role="status">Loading sales analytics…</p>}
       {report && <>
       {/* KPI Cards */}
@@ -155,6 +173,20 @@ export const AdminReportsPage: React.FC = () => {
         </div>
       </div>
 
+      <section className="bg-white rounded-2xl border border-stone-200 p-6 overflow-x-auto">
+        <h3 className="font-serif font-bold text-lg mb-4">Date-wise Sales (IST)</h3>
+        {dailySales.length === 0 ? <p className="text-sm text-stone-500">No sales recorded for these dates.</p> : (
+          <table className="w-full text-left text-sm">
+            <thead><tr>{['Date', 'Orders', 'Paid Orders', 'Revenue', 'Cash', 'UPI'].map(label => <th key={label} className="p-3 border-b">{label}</th>)}</tr></thead>
+            <tbody>{dailySales.map(day => (
+              <tr key={day.date}>
+                <td className="p-3">{day.date}</td><td className="p-3">{day.orders}</td><td className="p-3">{day.paid_orders}</td>
+                <td className="p-3">₹{Number(day.revenue).toFixed(2)}</td><td className="p-3">₹{Number(day.cash).toFixed(2)}</td><td className="p-3">₹{Number(day.upi).toFixed(2)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      </section>
       {/* Item-wise Performance Table */}
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden space-y-4 p-6">
         <h3 className="font-serif font-bold text-lg text-stone-900 border-b border-stone-100 pb-3">

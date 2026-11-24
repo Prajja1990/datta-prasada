@@ -3,6 +3,7 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface PublicRestaurantProfile {
   restaurant_name: string;
+  parcel_charge: number;
   home_content: Record<string, string>;
   tagline: string;
   tagline_kn: string;

@@ -163,20 +163,25 @@ supabase/migrations/20261212000000_complete_setup.sql
 To deploy to your Supabase project:
 1. Open the [Supabase Dashboard](https://supabase.com/dashboard).
 2. Go to **SQL Editor**.
-3. Run `supabase/migrations/20261212000000_complete_setup.sql` in SQL Editor. It contains the complete schema, seeds, Auth/profile synchronization, legacy login bridge, order persistence, sales analytics, restaurant settings, and configurable home content.
+3. Run `supabase/migrations/20261212000000_complete_setup.sql` in SQL Editor. It contains the complete schema, seeds, Auth/profile synchronization, retired legacy login endpoint, order persistence, sales analytics, restaurant settings, and configurable home content.
 4. Deploy both Edge Functions from the repository root with the Supabase CLI:
    ```bash
    supabase functions deploy user-admin
    supabase functions deploy legacy-login
    ```
-   Supabase provides the service-role secret to the function runtime. `legacy-login` checks the existing `user_accounts` bcrypt hash server-side, creates or syncs the Supabase Auth identity after valid credentials, and maps the account's roles. The browser then signs in through Supabase Auth normally. The function checks permissions before account-management changes.
+   Supabase provides the service-role secret only to the function runtime. The retired `legacy-login` endpoint returns HTTP 410; deploy it to replace the unsafe old bridge. `user-admin` verifies callers and database permissions before managing accounts.
 5. Copy your `Project URL` and `Anon Key` into your `.env` file:
    ```env
    VITE_SUPABASE_URL=https://your-project.supabase.co
    VITE_SUPABASE_ANON_KEY=your-anon-key-here
    ```
 
-The app uses Supabase Auth as the session source for protected database operations. Existing legacy `user_accounts` credentials are verified only inside the `legacy-login` Edge Function; on first successful login, that function provisions the corresponding Auth user and maps `user_profiles` and `user_roles`. This preserves existing bcrypt credentials while producing a normal Supabase Auth session. New accounts created from **Staff & Role Administration** use `user-admin` and Supabase Auth directly.
+Sign-in uses Supabase Auth exclusively. Existing Auth passwords continue to work. Accounts present only in `user_accounts` must be created through Supabase Auth or the authorized user-management page. Legacy password hashes are invalidated by security hardening; account metadata is preserved.
+
+For an existing database, apply `supabase/migrations/20261213000000_security_hardening.sql` instead of rerunning the full setup. Deploy the retired `legacy-login` function as above and deploy the updated frontend. This patch blocks direct profile updates, retires legacy credential RPCs, restricts permission mutations to audited RPCs, and forces new checkout orders to PENDING. Fresh installations use the complete setup, which includes the same protections.
+
+Online payment checkout is intentionally unavailable until a server payment integration validates provider signatures, captured amount, currency and order association. No simulated successful payment is enabled. Cash orders remain pending until authorized counter staff confirm collection.
+
 
 Checkout creates orders with the database RPC `create_order_with_token`. It writes the order and item snapshots in one database transaction, assigns the daily token on the server, and calculates prices from current available menu rows. The confirmation page looks up the saved order by its tracking token. Staff and kitchen screens read order rows from Supabase and save status/payment changes through permission-checked functions.
 

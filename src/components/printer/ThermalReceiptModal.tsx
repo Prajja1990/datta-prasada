@@ -141,6 +141,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
                   <span>GST (5%):</span>
                   <span>₹{order.taxAmount.toFixed(2)}</span>
                 </div>
+                {order.orderType === 'TAKEAWAY' && <div className="flex justify-between"><span>Parcel charge:</span><span>₹{(order.parcelCharge || 0).toFixed(2)}</span></div>}
                 <div className="flex justify-between font-bold text-xs pt-1 border-t border-stone-300">
                   <span>GRAND TOTAL:</span>
                   <span>₹{order.totalAmount.toFixed(2)}</span>

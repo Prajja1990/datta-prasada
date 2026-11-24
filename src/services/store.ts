@@ -296,6 +296,7 @@ function mapDatabaseOrder(row: any, items = row.order_items || row.items || []):
     tableNumber: row.table_number || undefined,
     subtotal: Number(row.subtotal),
     taxAmount: Number(row.tax_amount),
+    parcelCharge: Number(row.parcel_charge || 0),
     totalAmount: Number(row.total_amount),
     paymentMethod: row.payment_method,
     paymentStatus: row.payment_status,

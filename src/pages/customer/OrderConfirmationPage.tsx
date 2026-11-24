@@ -150,6 +150,7 @@ export const OrderConfirmationPage: React.FC = () => {
             <span>GST (5%):</span>
             <span className="font-mono">₹{order.taxAmount.toFixed(2)}</span>
           </div>
+          {order.orderType === 'TAKEAWAY' && <div className="flex justify-between text-xs"><span>Parcel charge:</span><span>₹{(order.parcelCharge || 0).toFixed(2)}</span></div>}
           <div className="flex justify-between font-serif font-black text-lg text-temple-900 pt-2 border-t border-stone-100">
             <span>Total Amount:</span>
             <span className="text-gold-700">₹{order.totalAmount.toFixed(2)}</span>

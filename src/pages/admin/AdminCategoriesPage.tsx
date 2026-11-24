@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { store } from '../../services/store';
+import { loadHomeMenu, saveCategoryToDatabase } from '../../services/restaurantDatabase';
 import { Category } from '../../types';
 import { Plus, Edit, FolderTree, X } from 'lucide-react';
 
@@ -19,14 +19,19 @@ export const AdminCategoriesPage: React.FC = () => {
   const [displayOrder, setDisplayOrder] = useState<number>(1);
   const [active, setActive] = useState(true);
 
-  const loadData = () => {
-    setCategories(store.getCategories().sort((a, b) => a.displayOrder - b.displayOrder));
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const loadData = async () => {
+    try {
+      const data = await loadHomeMenu(true);
+      setCategories(data.categories);
+      setError(null);
+    } catch (e: any) { setError(e.message || 'Unable to load menu data.'); }
   };
-
   useEffect(() => {
-    loadData();
-    const unsub = store.subscribe(() => loadData());
-    return unsub;
+    void loadData();
+    const timer = window.setInterval(() => void loadData(), 30000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const openAddModal = () => {
@@ -49,15 +54,16 @@ export const AdminCategoriesPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     if (!name.trim() || !nameKn.trim()) {
       alert('Please enter both English and Kannada category names.');
       return;
     }
 
     const catData: Category = {
-      id: editingCat ? editingCat.id : `cat-${Date.now()}`,
+      id: editingCat ? editingCat.id : crypto.randomUUID(),
       name: name.trim(),
       nameKn: nameKn.trim(),
       description: description.trim(),
@@ -65,13 +71,18 @@ export const AdminCategoriesPage: React.FC = () => {
       active,
     };
 
-    const actorName = user?.fullName || 'Manager';
-    store.saveCategory(catData, actorName);
-    setIsModalOpen(false);
+    setSaving(true);
+    try {
+      await saveCategoryToDatabase(catData, !!editingCat);
+      setIsModalOpen(false);
+      await loadData();
+    } catch (e: any) { setError(e.message || 'Unable to save category.'); }
+    finally { setSaving(false); }
   };
 
   return (
     <div className="p-6 sm:p-8 space-y-6 max-w-5xl mx-auto pb-28">
+      {error && <p role="alert" className="p-4 bg-red-50 text-red-700 rounded-xl">{error}</p>}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-stone-200 pb-4">
         <div>
           <h1 className="font-serif font-black text-3xl text-stone-900">
@@ -155,6 +166,7 @@ export const AdminCategoriesPage: React.FC = () => {
             </div>
 
             <form onSubmit={handleSave} className="space-y-4">
+              {error && <p role="alert" className="text-red-700">{error}</p>}
               <div>
                 <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
                   Category Name (English) *
@@ -229,7 +241,7 @@ export const AdminCategoriesPage: React.FC = () => {
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="submit" disabled={saving}
                   className="px-6 py-2.5 rounded-xl bg-temple-700 hover:bg-temple-800 text-white font-bold text-xs shadow-sm transition active:scale-95"
                 >
                   Save Category

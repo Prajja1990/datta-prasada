@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { store } from '../../services/store';
+import { loadHomeMenu, saveMenuItemToDatabase, deleteMenuItemFromDatabase, setDatabaseItemAvailability } from '../../services/restaurantDatabase';
 import { MenuItem, Category } from '../../types';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { 
@@ -38,15 +38,19 @@ export const AdminMenuPage: React.FC = () => {
   const [featured, setFeatured] = useState(false);
   const [available, setAvailable] = useState(true);
 
-  const loadData = () => {
-    setMenuItems(store.getMenuItems());
-    setCategories(store.getCategories());
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const loadData = async () => {
+    try {
+      const data = await loadHomeMenu(true);
+      setCategories(data.categories); setMenuItems(data.menuItems);
+      setError(null);
+    } catch (e: any) { setError(e.message || 'Unable to load menu data.'); }
   };
-
   useEffect(() => {
-    loadData();
-    const unsub = store.subscribe(() => loadData());
-    return unsub;
+    void loadData();
+    const timer = window.setInterval(() => void loadData(), 30000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const openAddModal = () => {
@@ -79,8 +83,9 @@ export const AdminMenuPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     if (!name.trim() || !nameKn.trim()) {
       alert('Please enter both English and Kannada dish names.');
       return;
@@ -88,7 +93,7 @@ export const AdminMenuPage: React.FC = () => {
 
     const actorName = user?.fullName || 'Manager';
     const itemData: MenuItem = {
-      id: editingItem ? editingItem.id : `item-${Date.now()}`,
+      id: editingItem ? editingItem.id : crypto.randomUUID(),
       categoryId,
       name: name.trim(),
       nameKn: nameKn.trim(),
@@ -102,24 +107,32 @@ export const AdminMenuPage: React.FC = () => {
       preparationTimeMinutes: Number(prepTime),
     };
 
-    store.saveMenuItem(itemData, actorName);
-    setIsModalOpen(false);
+    setSaving(true);
+    try {
+      await saveMenuItemToDatabase(itemData, !!editingItem);
+      setIsModalOpen(false);
+      await loadData();
+    } catch (e: any) { setError(e.message || 'Unable to save menu item.'); }
+    finally { setSaving(false); }
   };
 
-  const handleDelete = (id: string, itemName: string) => {
+  const handleDelete = async (id: string, itemName: string) => {
     if (!confirm(`Are you sure you want to delete "${itemName}" from the menu?`)) return;
     const actorName = user?.fullName || 'Manager';
-    store.deleteMenuItem(id, actorName);
+    try { await deleteMenuItemFromDatabase(id); await loadData(); }
+    catch (e: any) { setError(e.message || 'Unable to delete menu item.'); }
   };
 
-  const handleToggleAvailability = (item: MenuItem) => {
+  const handleToggleAvailability = async (item: MenuItem) => {
     const actorName = user?.fullName || 'Manager';
-    store.toggleItemAvailability(item.id, !item.available, actorName);
+    try { await setDatabaseItemAvailability(item.id, !item.available); await loadData(); }
+    catch (e: any) { setError(e.message || 'Unable to change availability.'); }
   };
 
   return (
     <div className="p-6 sm:p-8 space-y-6 max-w-7xl mx-auto pb-28">
       {/* Top Bar */}
+      {error && <p role="alert" className="p-4 bg-red-50 text-red-700 rounded-xl">{error}</p>}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-stone-200 pb-4">
         <div>
           <h1 className="font-serif font-black text-3xl text-stone-900">
@@ -149,7 +162,7 @@ export const AdminMenuPage: React.FC = () => {
                 <th className="p-4">Kannada Name</th>
                 <th className="p-4">Category</th>
                 <th className="p-4">Price (INR)</th>
-                <th className="p-4">Stock Status</th>
+                <th className="p-4">Customer Visibility</th>
                 <th className="p-4">Special</th>
                 <th className="p-4 text-right">Actions</th>
               </tr>
@@ -196,6 +209,9 @@ export const AdminMenuPage: React.FC = () => {
                     <td className="p-4">
                       <button
                         onClick={() => handleToggleAvailability(item)}
+                        role="switch"
+                        aria-checked={item.available}
+                        aria-label={`Show ${item.name} to customers`}
                         className={`px-3 py-1 rounded-full text-[10px] font-bold transition flex items-center gap-1 ${
                           item.available
                             ? 'bg-green-100 text-green-800 hover:bg-green-200'
@@ -203,7 +219,7 @@ export const AdminMenuPage: React.FC = () => {
                         }`}
                       >
                         <span className={`w-2 h-2 rounded-full ${item.available ? 'bg-green-600' : 'bg-red-600'}`} />
-                        <span>{item.available ? 'Available' : 'Sold Out'}</span>
+                        <span>{item.available ? 'Enabled' : 'Disabled'}</span>
                       </button>
                     </td>
 
@@ -261,6 +277,7 @@ export const AdminMenuPage: React.FC = () => {
             </div>
 
             <form onSubmit={handleSave} className="space-y-4">
+              {error && <p role="alert" className="text-red-700">{error}</p>}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
@@ -390,7 +407,7 @@ export const AdminMenuPage: React.FC = () => {
                     onChange={(e) => setAvailable(e.target.checked)}
                     className="w-4 h-4 text-temple-700 rounded"
                   />
-                  <span>Available for Orders</span>
+                  <span>Enabled — show to customers and allow orders</span>
                 </label>
 
                 <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-stone-800">
@@ -413,7 +430,7 @@ export const AdminMenuPage: React.FC = () => {
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="submit" disabled={saving}
                   className="px-6 py-2.5 rounded-xl bg-temple-700 hover:bg-temple-800 text-white font-bold text-xs shadow-sm transition active:scale-95"
                 >
                   Save Dish

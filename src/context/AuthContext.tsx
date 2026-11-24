@@ -84,37 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      let { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
-
-      // Existing installations may still have credentials only in user_accounts.
-      // Verify those credentials server-side, provision/sync the Auth identity,
-      // then establish a normal Supabase Auth session for all RLS-protected APIs.
-      const isInvalidCredentials = error && (
-        error.code === 'invalid_credentials' ||
-        error.code === 'email_not_confirmed' ||
-        error.message.toLowerCase().includes('invalid login credentials')
-      );
-      if (isInvalidCredentials) {
-        const { error: bridgeError } = await supabase.functions.invoke('legacy-login', {
-          body: { email: normalizedEmail, password },
-        });
-        if (bridgeError) {
-          let message = bridgeError.message;
-          if (bridgeError.name === 'FunctionsFetchError' || message.includes('Failed to send a request')) {
-            message = 'The login service is unreachable. Deploy the legacy-login Supabase Edge Function to the configured project, then try again.';
-          }
-          try {
-            const response = (bridgeError as any).context;
-            const body = response?.json ? await response.json() : null;
-            if (body?.error) message = body.error;
-          } catch { /* retain the function error message */ }
-          return { success: false, error: message || 'Invalid email or password.' };
-        }
-        const retry = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
-        data = retry.data;
-        error = retry.error;
-      }
-
+      const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
       if (error) return { success: false, error: error.message };
       const profile = await loadProfile(data.user.id, data.user.email);
       if (!profile.isActive) {

@@ -11,6 +11,7 @@ export const AdminSettingsPage: React.FC = () => {
 
   const [homeContent, setHomeContent] = useState<Record<string, string>>({});
   const [homeMenuOptions, setHomeMenuOptions] = useState<{ id: string; name: string }[]>([]);
+  const [parcelCharge, setParcelCharge] = useState(0);
   const [openingHours, setOpeningHours] = useState('');
   const [restaurantName, setRestaurantName] = useState('');
   const [tagline, setTagline] = useState('');
@@ -31,6 +32,7 @@ export const AdminSettingsPage: React.FC = () => {
     loadRestaurantSettings().then(settings => {
       if (!active) return;
       setRestaurantName(settings.restaurant_name);
+      setParcelCharge(Number(settings.parcel_charge || 0));
       setHomeContent(settings.home_content || {});
       setOpeningHours(settings.opening_hours);
       setTagline(settings.tagline);
@@ -56,7 +58,7 @@ export const AdminSettingsPage: React.FC = () => {
     setError(null);
     try {
       await saveRestaurantSettings({
-        home_content: homeContent, restaurant_name: restaurantName, opening_hours: openingHours, tagline, tagline_kn: taglineKn,
+        parcel_charge: parcelCharge, home_content: homeContent, restaurant_name: restaurantName, opening_hours: openingHours, tagline, tagline_kn: taglineKn,
         address, phone, upi_vpa: upiVpa, token_prefix: tokenPrefix,
         gst_rate: gstRate, thermal_width: thermalWidth,
       });
@@ -200,6 +202,11 @@ export const AdminSettingsPage: React.FC = () => {
           </div>
         </div>
 
+        <div>
+          <label className="block text-xs font-bold text-stone-700 mb-1">Parcel charge per takeaway order (₹)</label>
+          <input type="number" min="0" step="0.01" required value={parcelCharge} onChange={e => setParcelCharge(Number(e.target.value))} className="w-full px-3 py-2 border rounded-xl" />
+          <p className="text-xs text-stone-500 mt-1">Added once per takeaway order. Set 0 for no charge. Enter the final charge inclusive of any applicable packing tax.</p>
+        </div>
         {/* Thermal Hardware Printer Options */}
         <div className="space-y-4 pt-4 border-t border-stone-100">
           <h3 className="font-serif font-bold text-base text-stone-900 border-b border-stone-100 pb-2 flex items-center gap-2">
