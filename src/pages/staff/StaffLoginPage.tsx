@@ -86,7 +86,7 @@ export const StaffLoginPage: React.FC = () => {
             <img
               src="/logo.jpg"
               alt="Datta Prasada"
-              className="w-full h-full object-contain object-center"
+              className="w-full h-full restaurant-logo"
             />
           </div>
           <h1 className="font-serif font-black text-3xl text-temple-900">

@@ -66,7 +66,7 @@ export const HomePage: React.FC = () => {
                   <img
                     src={profile?.home_content.logo_url || undefined}
                     alt={profile?.restaurant_name || 'Restaurant logo'}
-                    className="w-full h-full object-contain object-center"
+                    className="w-full h-full restaurant-logo"
                   />
                 </div>
                 <div>

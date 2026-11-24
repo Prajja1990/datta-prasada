@@ -51,7 +51,7 @@ export const Header: React.FC = () => {
               <img
                 src={profile?.home_content.logo_url || undefined}
                 alt={profile?.restaurant_name || 'Restaurant logo'}
-                className="w-full h-full object-contain object-center"
+                className="w-full h-full restaurant-logo"
               />
             </div>
 
@@ -273,7 +273,7 @@ export const Footer: React.FC = () => {
                 <img
                   src={profile?.home_content.logo_url || undefined}
                   alt={profile?.restaurant_name || 'Restaurant logo'}
-                  className="w-full h-full object-contain object-center"
+                  className="w-full h-full restaurant-logo"
                 />
               </div>
               <span className="font-serif font-black text-2xl text-gold-400 tracking-wide">

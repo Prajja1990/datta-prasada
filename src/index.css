@@ -69,3 +69,14 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #CCA86E;
 }
+
+
+/* Shared by every brand logo, including admin and printed receipts. */
+img.restaurant-logo {
+  object-fit: contain;
+  object-position: center;
+  box-sizing: border-box;
+  padding: 2px;
+  border-radius: 0;
+  display: block;
+}

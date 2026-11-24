@@ -54,7 +54,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
             {/* Header */}
             <div className="text-center mb-3">
               <div className="w-12 h-12 mx-auto mb-1.5 rounded-lg overflow-hidden border border-stone-300">
-                <img src="/logo.jpg" alt="Datta Prasada" className="w-full h-full object-cover grayscale contrast-125" />
+                <img src="/logo.jpg" alt="Datta Prasada" className="w-full h-full grayscale contrast-125 restaurant-logo" />
               </div>
               <div className="font-bold text-base tracking-wider uppercase font-serif">
                 DATTA PRASADA

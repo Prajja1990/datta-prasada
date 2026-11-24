@@ -99,7 +99,7 @@ export const AdminLayout: React.FC = () => {
                 <img
                   src="/logo.jpg"
                   alt="Datta Prasada"
-                  className="w-full h-full object-cover"
+                  className="w-full h-full restaurant-logo"
                 />
               </div>
               <div>
